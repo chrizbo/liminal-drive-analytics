@@ -30,7 +30,7 @@ from utils import doc_url, direness_score, severity_label
 
 app = FastAPI(
     title="Liminal Drive Analytics API",
-    description="Graph-based analytics for Google Drive documents.",
+    description="Graph-based analytics for Google Drive documents. https://github.com/chrizbo/liminal-drive-analytics",
     version="0.1.0",
 )
 

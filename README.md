@@ -2,6 +2,8 @@
 
 > A graph-based analytics tool for Google Drive that gives operations leaders a pulse on their organization's knowledge — what's rising, what's stale, what's central, and how terminology is evolving.
 
+[![GitHub](https://img.shields.io/badge/github-chrizbo%2Fliminal--drive--analytics-blue?logo=github)](https://github.com/chrizbo/liminal-drive-analytics)
+
 ## Screenshots
 
 | Overview | Needs Attention |
