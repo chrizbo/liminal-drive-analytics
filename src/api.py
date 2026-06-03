@@ -1,4 +1,4 @@
-"""FastAPI backend — exposes Drive Analytics data as JSON.
+"""FastAPI backend — exposes Liminal Drive Analytics data as JSON.
 
 Designed so the Streamlit dashboard can be replaced with any frontend
 (React, Observable, plain JS) without touching the data layer.
@@ -29,7 +29,7 @@ from analytics import (
 from utils import doc_url, direness_score, severity_label
 
 app = FastAPI(
-    title="Drive Analytics API",
+    title="Liminal Drive Analytics API",
     description="Graph-based analytics for Google Drive documents.",
     version="0.1.0",
 )

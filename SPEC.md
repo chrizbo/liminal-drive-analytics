@@ -2,7 +2,7 @@
 
 ## Overview
 
-Drive Analytics indexes Google Drive documents, extracts links and activity signals, builds a graph, and runs analytics over that graph on a schedule. The system is designed to start small (personal Drive, local machine) and scale to org-wide deployment on Google Cloud.
+Liminal Drive Analytics indexes Google Drive documents, extracts links and activity signals, builds a graph, and runs analytics over that graph on a schedule. The system is designed to start small (personal Drive, local machine) and scale to org-wide deployment on Google Cloud.
 
 ---
 

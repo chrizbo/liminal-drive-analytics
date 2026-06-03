@@ -246,7 +246,7 @@ def run(top_n, recent_days, prior_days):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Drive Analytics report")
+    parser = argparse.ArgumentParser(description="Liminal Drive Analytics report")
     parser.add_argument("--top", type=int, default=10, help="How many results per section (default: 10)")
     parser.add_argument("--recent-days", type=int, default=7, help="Recent window in days (default: 7)")
     parser.add_argument("--prior-days", type=int, default=7, help="Prior comparison window in days (default: 7)")

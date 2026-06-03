@@ -1,6 +1,6 @@
 # Google API Setup
 
-Step-by-step instructions to configure Google API access for Drive Analytics. This covers personal Google Drive access using OAuth. For org-wide Workspace deployment, see the note at the bottom.
+Step-by-step instructions to configure Google API access for Liminal Drive Analytics. This covers personal Google Drive access using OAuth. For org-wide Workspace deployment, see the note at the bottom.
 
 ---
 
@@ -8,7 +8,7 @@ Step-by-step instructions to configure Google API access for Drive Analytics. Th
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com).
 2. Click the project dropdown at the top → **New Project**.
-3. Name it `drive-analytics` (or anything you like).
+3. Name it `liminal-drive-analytics` (or anything you like).
 4. Click **Create** and wait for it to provision (~30 seconds).
 5. Make sure the new project is selected in the dropdown before continuing.
 
@@ -38,7 +38,7 @@ This is required before you can create credentials.
 1. Go to **APIs & Services → OAuth consent screen**.
 2. Select **External** (even for personal use — Internal requires a Workspace org).
 3. Fill in the required fields:
-   - **App name**: `Drive Analytics`
+   - **App name**: `Liminal Drive Analytics`
    - **User support email**: your Gmail address
    - **Developer contact email**: your Gmail address
 4. Click **Save and Continue** through the Scopes step (you'll add scopes in code, not here).
@@ -54,7 +54,7 @@ This is required before you can create credentials.
 1. Go to **APIs & Services → Credentials**.
 2. Click **Create Credentials → OAuth client ID**.
 3. Application type: **Desktop app**.
-4. Name: `drive-analytics-local`.
+4. Name: `liminal-drive-analytics-local`.
 5. Click **Create**.
 6. Click **Download JSON** on the confirmation dialog.
 7. Save the downloaded file as `credentials.json` in the root of this project.
@@ -88,7 +88,7 @@ python src/auth.py
 On first run:
 1. A browser window opens.
 2. Sign in with the Google account you added as a test user.
-3. You'll see a warning that the app is unverified — click **Advanced → Go to Drive Analytics (unsafe)**.
+3. You'll see a warning that the app is unverified — click **Advanced → Go to Liminal Drive Analytics (unsafe)**.
 4. Grant the requested permissions.
 5. The browser will redirect to `localhost` and you can close it.
 
@@ -125,7 +125,7 @@ All scopes are read-only. The app never writes to Drive.
 If you want to revoke access at any time:
 
 1. Go to [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
-2. Find **Drive Analytics** and click **Remove Access**.
+2. Find **Liminal Drive Analytics** and click **Remove Access**.
 3. Delete `token.json` from the project directory.
 
 ---
