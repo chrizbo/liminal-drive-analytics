@@ -1,6 +1,7 @@
 credentials.json
 token.json
 data/
+config.json
 __pycache__/
 *.pyc
 .env
@@ -8,3 +9,4 @@ __pycache__/
 venv/
 .DS_Store
 lib/
+.pytest_cache/

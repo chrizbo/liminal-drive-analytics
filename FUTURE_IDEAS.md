@@ -4,6 +4,10 @@ Ideas worth keeping but tabled for now. Revisit once the core graph is working.
 
 ---
 
+## People API: Resolve Editor Identities (blocked on OAuth verification)
+
+> **Status:** The `contacts.readonly` scope is a Google "sensitive scope" requiring app verification for external OAuth apps. It works in Workspace with Domain-Wide Delegation (the production path) but is blocked for personal Drive prototypes until the app is verified. The code is written (`resolve_people()` in indexer.py) and ready to enable once unblocked.
+
 ## People API: Resolve Editor Identities
 
 The Drive Activity API returns `people/XXXXX` resource names for editors and viewers, not human-readable names or emails. Adding the `https://www.googleapis.com/auth/contacts.readonly` scope and calling the People API would let us resolve these to display names and email addresses. This would make the Top Editors table and the Doc Detail contributors section genuinely useful — right now they show opaque IDs. At org scale with Domain-Wide Delegation, this becomes a full people graph.

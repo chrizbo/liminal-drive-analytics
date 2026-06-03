@@ -24,7 +24,7 @@ Operations people and leaders who want to understand how organizational knowledg
 
 ## Philosophy
 
-This project is an extension of the [Living Documents](https://github.com/chrizbo/agentics-beyond-code) concept: documents aren't static artifacts, they're living signals of organizational activity. By connecting them into a graph and tracking how that graph changes over time, you get a dynamic picture of what the org knows, values, and is actively working on.
+This project is an extension of the Living Documents concept from [Agentics Beyond Code](https://github.com/chrizbo/agentics-beyond-code): documents aren't static artifacts, they're living signals of organizational activity. By connecting them into a graph and tracking how that graph changes over time, you get a dynamic picture of what the org knows, values, and is actively working on.
 
 ## Project Structure
 
@@ -45,20 +45,38 @@ drive-analytics/
 
 ## Getting Started
 
-See [docs/google-setup.md](docs/google-setup.md) to configure Google API access, then come back here.
+### 1. Google API setup
+Follow [docs/google-setup.md](docs/google-setup.md) to create a Google Cloud project, enable the required APIs, and download `credentials.json`.
 
+### 2. Install dependencies
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+pip3 install -r requirements.txt
+```
 
-# Authenticate (opens browser for OAuth)
-python src/auth.py
+### 3. Configure
+```bash
+cp config.example.json config.json
+# Edit config.json to add domain-specific settings for your org
+```
 
-# Run first index (recent docs only)
-python src/indexer.py --days 90
+### 4. Authenticate
+```bash
+python3 src/auth.py --verify
+```
 
-# View analytics
-python src/analytics.py
+### 5. Index your Drive
+```bash
+python3 src/indexer.py --days 90 --expand
+```
+
+### 6. Launch the dashboard
+```bash
+streamlit run src/dashboard.py
+```
+
+### Running tests
+```bash
+python3 -m pytest
 ```
 
 ## Hosting

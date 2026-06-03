@@ -11,7 +11,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/drive.activity.readonly",
-    # Slides API uses the drive.readonly scope for content access
+    "https://www.googleapis.com/auth/contacts.readonly",
 ]
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -44,7 +44,8 @@ def build_services(creds):
     docs = build("docs", "v1", credentials=creds)
     slides = build("slides", "v1", credentials=creds)
     activity = build("driveactivity", "v2", credentials=creds)
-    return drive, docs, slides, activity
+    people = build("people", "v1", credentials=creds)
+    return drive, docs, slides, activity, people
 
 
 if __name__ == "__main__":
@@ -56,7 +57,7 @@ if __name__ == "__main__":
     print("Authentication successful.")
 
     if args.verify:
-        drive, _, _, _ = build_services(creds)
+        drive, _, _, _, _ = build_services(creds)
         results = drive.files().list(
             q="mimeType='application/vnd.google-apps.document' and trashed=false",
             orderBy="modifiedTime desc",

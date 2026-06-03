@@ -38,6 +38,7 @@ def init(conn):
             id TEXT PRIMARY KEY,
             url TEXT,
             domain TEXT,
+            apex_domain TEXT,
             resource_type TEXT
         );
 
@@ -81,6 +82,7 @@ def init(conn):
     # Migrations — safe to run on existing DBs
     migrations = [
         "ALTER TABLE documents ADD COLUMN web_url TEXT",
+        "ALTER TABLE external_resources ADD COLUMN apex_domain TEXT",
     ]
     for sql in migrations:
         try:

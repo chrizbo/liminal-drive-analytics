@@ -1,15 +1,33 @@
 """Indexes Google Drive Docs and Slides: links + activity."""
 
 import argparse
+import json
+import os
 import re
 import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
+import signal
+import sys
+import warnings
+warnings.filterwarnings("ignore")
+
+from tqdm import tqdm
 from auth import get_credentials, build_services
 from db import connect, init
 
+
+def _handle_interrupt(sig, frame):
+    print("\n\nInterrupted. Progress saved to data/graph.db.")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, _handle_interrupt)
+
 DRIVE_FILE_RE = re.compile(r"https://(?:docs|drive|slides|sheets)\.google\.com/.+?/d/([a-zA-Z0-9_-]+)")
+
+def truncate(s, n=40):
+    return s[:n-3] + "..." if len(s) > n else s
 
 EXTERNAL_TYPE_MAP = {
     "notion.so": "notion",
@@ -104,27 +122,83 @@ EXTERNAL_TYPE_MAP = {
 }
 
 
+def get_apex_domain(host):
+    """Extract registrable apex domain from a full hostname.
+    e.g. chrisbutler.substack.com -> substack.com
+         en.wikipedia.org         -> wikipedia.org
+         github.com               -> github.com
+    """
+    parts = host.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return host
+
+
 def classify_domain(url):
-    """Returns (domain, resource_type). resource_type is a known category if
-    the domain matches the map, otherwise the domain itself is used as the type
-    so nothing is lost as a generic 'external' bucket."""
+    """Returns (domain, apex_domain, resource_type).
+    domain      = full subdomain (chrisbutler.substack.com)
+    apex_domain = registrable domain (substack.com)
+    resource_type = known category if in map, otherwise the apex_domain
+    """
     try:
         host = urllib.parse.urlparse(url).netloc.lower().lstrip("www.")
     except Exception:
-        return url, "unknown"
+        return url, url, "unknown"
     if not host:
-        return "", "unknown"
+        return "", "", "unknown"
+    apex = get_apex_domain(host)
     for key, rtype in EXTERNAL_TYPE_MAP.items():
         if key in host:
-            return host, rtype
-    return host, host  # domain is its own type when not in the map
+            return host, apex, rtype
+    return host, apex, apex  # resource_type falls back to apex_domain
+
+
+def _load_path_significant():
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+    try:
+        import json
+        with open(config_path) as f:
+            return set(json.load(f).get("path_significant_domains", []))
+    except Exception:
+        return {"github.com", "arxiv.org", "amazon.com", "app.avoma.com", "reddit.com", "goodreads.com"}
+
+# Domains where the path meaningfully identifies the resource
+PATH_SIGNIFICANT = _load_path_significant()
+# Domains where a specific query param is the resource ID
+QUERY_PARAM_ID = {
+    "youtube.com": "v",
+    "youtu.be":    None,   # whole path is the ID
+}
 
 
 def normalize_url(url):
-    """Strip tracking params and fragments for stable external node IDs."""
+    """Stable external node ID. Preserves path for path-significant domains,
+    and video ID for YouTube. Strips everything else."""
     try:
         p = urllib.parse.urlparse(url)
-        # keep scheme + netloc + path only for external resources
+        host = p.netloc.lower().lstrip("www.")
+        apex = get_apex_domain(host)
+
+        if apex in PATH_SIGNIFICANT or host in PATH_SIGNIFICANT:
+            # Keep scheme + netloc + path, strip query/fragment + trailing slash
+            path = p.path.rstrip("/") or "/"
+            # Remove trailing slash unless it's the root
+            if path != "/" and path.endswith("/"):
+                path = path.rstrip("/")
+            return urllib.parse.urlunparse((p.scheme, p.netloc, path, "", "", ""))
+
+        if apex == "youtube.com" or host == "youtu.be":
+            # Preserve video ID as query param ?v=
+            params = urllib.parse.parse_qs(p.query)
+            vid = params.get("v", [None])[0]
+            if vid:
+                return f"https://www.youtube.com/watch?v={vid}"
+            # youtu.be/VIDEO_ID
+            if host == "youtu.be" and p.path:
+                vid = p.path.lstrip("/")
+                return f"https://www.youtube.com/watch?v={vid}"
+
+        # Default: scheme + netloc + path, no query or fragment
         return urllib.parse.urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
     except Exception:
         return url
@@ -263,13 +337,13 @@ def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, n
                 ON CONFLICT(src_id, dst_id) DO UPDATE SET last_seen=excluded.last_seen
             """, (file_id, target, now_str, now_str))
         elif kind == "external" and target:
-            domain, rtype = classify_domain(target)
+            domain, apex, rtype = classify_domain(target)
             resource_id = target
             conn.execute("""
-                INSERT INTO external_resources (id, url, domain, resource_type)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO external_resources (id, url, domain, apex_domain, resource_type)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING
-            """, (resource_id, target, domain, rtype))
+            """, (resource_id, target, domain, apex, rtype))
             conn.execute("""
                 INSERT INTO external_links (src_id, resource_id, anchor_text, first_seen, last_seen)
                 VALUES (?, ?, ?, ?, ?)
@@ -313,9 +387,57 @@ def fetch_file_meta(drive_svc, file_id):
         return None
 
 
+def resolve_people(people_svc, conn, verbose=False):
+    """Resolve people/XXXXX resource names → display name + email using People API.
+    Only fetches records where email is still blank. Batches in groups of 50."""
+    unresolved = [
+        row["id"] for row in conn.execute(
+            "SELECT id FROM persons WHERE email = '' OR email IS NULL"
+        )
+    ]
+    if not unresolved:
+        print("All persons already resolved.")
+        return
+
+    print(f"Resolving {len(unresolved)} person IDs via People API...")
+    resolved = 0
+    batch_size = 200
+    batches = range(0, len(unresolved), batch_size)
+    with tqdm(batches, desc="Resolving people", unit="batch", dynamic_ncols=True) as bar:
+        for i in bar:
+            batch = unresolved[i:i + batch_size]
+            try:
+                resp = people_svc.people().getBatchGet(
+                    resourceNames=batch,
+                    personFields="names,emailAddresses",
+                ).execute()
+            except Exception as e:
+                print(f"\n  Warning: People API batch failed: {e}")
+                continue
+
+            for entry in resp.get("responses", []):
+                resource_name = entry.get("requestedResourceName", "")
+                person = entry.get("person", {})
+                names = person.get("names", [])
+                emails = person.get("emailAddresses", [])
+                display_name = names[0].get("displayName", "") if names else ""
+                email = emails[0].get("value", "") if emails else ""
+                if display_name or email:
+                    conn.execute(
+                        "UPDATE persons SET display_name=?, email=? WHERE id=?",
+                        (display_name, email, resource_name)
+                    )
+                    if verbose:
+                        tqdm.write(f"  {resource_name} → {display_name} <{email}>")
+                    resolved += 1
+
+    conn.commit()
+    print(f"Resolved {resolved} of {len(unresolved)} person IDs.")
+
+
 def run(days, verbose, expand=False):
     creds = get_credentials()
-    drive_svc, docs_svc, slides_svc, activity_svc = build_services(creds)
+    drive_svc, docs_svc, slides_svc, activity_svc, people_svc = build_services(creds)
     conn = connect()
     init(conn)
 
@@ -344,10 +466,10 @@ def run(days, verbose, expand=False):
             break
 
     print(f"Found {len(files)} files. Indexing...")
-    for i, f in enumerate(files, 1):
-        if verbose:
-            print(f"[{i}/{len(files)}]", end=" ")
-        index_file(f, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
+    with tqdm(files, unit="doc", dynamic_ncols=True) as bar:
+        for f in bar:
+            bar.set_postfix_str(truncate(f.get("name", "")).ljust(40), refresh=True)
+            index_file(f, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
 
     if expand:
         # Follow doc→doc links to index referenced docs not in the date window
@@ -360,19 +482,20 @@ def run(days, verbose, expand=False):
         ]
         if unindexed:
             print(f"\nExpanding: found {len(unindexed)} linked-but-unindexed docs. Fetching...")
-            for i, file_id in enumerate(unindexed, 1):
-                meta = fetch_file_meta(drive_svc, file_id)
-                if not meta:
-                    continue
-                mime = meta.get("mimeType", "")
-                if mime not in ("application/vnd.google-apps.document", "application/vnd.google-apps.presentation"):
-                    continue
-                if verbose:
-                    print(f"  [expand {i}/{len(unindexed)}]", end=" ")
-                index_file(meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
+            with tqdm(unindexed, desc="Expanding", unit="doc", dynamic_ncols=True) as bar:
+                for file_id in bar:
+                    meta = fetch_file_meta(drive_svc, file_id)
+                    if not meta:
+                        continue
+                    mime = meta.get("mimeType", "")
+                    if mime not in ("application/vnd.google-apps.document", "application/vnd.google-apps.presentation"):
+                        continue
+                    bar.set_postfix_str(truncate(meta.get("name", "")), refresh=True)
+                    index_file(meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
         else:
             print("\nNo unindexed linked docs found.")
 
+    resolve_people(people_svc, conn, verbose)
     conn.close()
     print(f"\nDone. data/graph.db is up to date.")
 
@@ -383,10 +506,10 @@ def reclassify(verbose=False):
     rows = list(conn.execute("SELECT id, url FROM external_resources"))
     updated = 0
     for row in rows:
-        domain, rtype = classify_domain(row["url"])
+        domain, apex, rtype = classify_domain(row["url"])
         conn.execute(
-            "UPDATE external_resources SET domain=?, resource_type=? WHERE id=?",
-            (domain, rtype, row["id"])
+            "UPDATE external_resources SET domain=?, apex_domain=?, resource_type=? WHERE id=?",
+            (domain, apex, rtype, row["id"])
         )
         if verbose and rtype != "external":
             print(f"  {rtype:<20} {domain}")
@@ -401,9 +524,17 @@ if __name__ == "__main__":
     parser.add_argument("--days", type=int, default=90, help="How many days back to index (default: 90)")
     parser.add_argument("--expand", action="store_true", help="Follow links to index referenced docs outside the date window")
     parser.add_argument("--reclassify", action="store_true", help="Re-run domain classification on all stored external links")
+    parser.add_argument("--resolve-people", action="store_true", help="Resolve person IDs to names/emails via People API")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show each file as it's indexed")
     args = parser.parse_args()
     if args.reclassify:
         reclassify(args.verbose)
+    elif args.resolve_people:
+        creds = get_credentials()
+        _, _, _, _, people_svc = build_services(creds)
+        conn = connect()
+        init(conn)
+        resolve_people(people_svc, conn, args.verbose)
+        conn.close()
     else:
         run(args.days, args.verbose, args.expand)

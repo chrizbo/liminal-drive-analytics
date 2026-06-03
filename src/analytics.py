@@ -8,6 +8,12 @@ from db import connect
 from graph import build_doc_graph, in_degree_rank, betweenness, communities
 
 
+STALE_WINDOW_DAYS    = 30   # inactivity window — no/little activity in this period
+STALE_HISTORY_DAYS   = 90   # look-back for historical average
+STALE_RECENT_MAX     = 2    # max activity in stale window to still count as stale
+STALE_HISTORY_MIN    = 3    # minimum historical daily avg to care about at all
+
+
 def activity_by_doc(conn, days_recent=7, days_prior=7):
     """Returns {doc_id: {recent: N, prior: N}} activity totals."""
     now = datetime.now(timezone.utc).date()
@@ -37,6 +43,43 @@ def activity_by_doc(conn, days_recent=7, days_prior=7):
     return {doc_id: {"recent": recent.get(doc_id, 0), "prior": prior.get(doc_id, 0)} for doc_id in all_ids}
 
 
+def stale_activity(conn):
+    """
+    Returns {doc_id: {recent_30d: N, history_total: N, history_daily_avg: F}}
+    Recent = last 30 days. History = prior 90 days before that.
+    """
+    now = datetime.now(timezone.utc).date()
+    recent_start  = (now - timedelta(days=STALE_WINDOW_DAYS)).isoformat()
+    history_start = (now - timedelta(days=STALE_WINDOW_DAYS + STALE_HISTORY_DAYS)).isoformat()
+
+    recent = {}
+    for row in conn.execute("""
+        SELECT document_id, SUM(views + edits + comments) as total
+        FROM activity_snapshots WHERE date >= ?
+        GROUP BY document_id
+    """, (recent_start,)):
+        recent[row["document_id"]] = row["total"] or 0
+
+    history = {}
+    for row in conn.execute("""
+        SELECT document_id, SUM(views + edits + comments) as total
+        FROM activity_snapshots WHERE date >= ? AND date < ?
+        GROUP BY document_id
+    """, (history_start, recent_start)):
+        history[row["document_id"]] = row["total"] or 0
+
+    all_ids = set(recent) | set(history)
+    result = {}
+    for doc_id in all_ids:
+        hist_total = history.get(doc_id, 0)
+        result[doc_id] = {
+            "recent_30d":      recent.get(doc_id, 0),
+            "history_total":   hist_total,
+            "history_daily_avg": round(hist_total / STALE_HISTORY_DAYS, 2),
+        }
+    return result
+
+
 def title_map(conn):
     return {row["id"]: row["title"] for row in conn.execute("SELECT id, title FROM documents")}
 
@@ -52,8 +95,42 @@ def rising_docs(activity, titles, top_n=10):
     return candidates[:top_n]
 
 
-def stale_docs(activity, in_degree, titles, top_n=10):
-    """Docs with high in-degree or historical activity but low recent activity."""
+def stale_docs(stale_act, in_degree, titles, top_n=10):
+    """
+    Docs with little/no activity in the last 30 days that used to be active.
+    Ranked by how dramatic the drop-off is relative to historical average.
+    """
+    in_deg = dict(in_degree)
+    candidates = []
+    for doc_id, counts in stale_act.items():
+        recent   = counts["recent_30d"]
+        hist_avg = counts["history_daily_avg"]
+        indeg    = in_deg.get(doc_id, 0)
+
+        # Must be indexed and have a title
+        if doc_id not in titles:
+            continue
+        # Must be below the recent activity threshold
+        if recent > STALE_RECENT_MAX:
+            continue
+        # Must have meaningful historical activity OR be a hub
+        if hist_avg < STALE_HISTORY_MIN and indeg == 0:
+            continue
+
+        # Drop-off score: how far below historical average the recent period is
+        expected_30d = hist_avg * STALE_WINDOW_DAYS
+        dropoff = max(0, expected_30d - recent)
+
+        candidates.append((doc_id, recent, counts["history_total"], indeg, dropoff))
+
+    # Sort: hubs first within each tier, then by dropoff magnitude
+    candidates.sort(key=lambda x: (x[3] > 0, x[4]), reverse=True)
+    return candidates[:top_n]
+
+
+# Keep old signature available for needs_attention compatibility
+def _stale_docs_compat(activity, in_degree, titles, top_n=10):
+    """Compatibility shim used by needs_attention which passes activity dict."""
     in_deg = dict(in_degree)
     candidates = []
     for doc_id, counts in activity.items():
@@ -132,17 +209,17 @@ def run(top_n, recent_days, prior_days):
         title = titles.get(doc_id, "[unknown]")
         print(f"  +{gain:>3} activity  [{pri}→{rec}]  {title}")
 
-    print_section(f"Stale Documents (no activity in {recent_days}d, had prior signal)")
-    stale = stale_docs(activity, in_deg, titles, top_n)
+    print_section(f"Stale Documents (≤{STALE_RECENT_MAX} activity in last {STALE_WINDOW_DAYS}d, was active before)")
+    stale_act = stale_activity(conn)
+    stale = stale_docs(stale_act, in_deg, titles, top_n)
     if not stale:
         print("  No stale documents detected.")
-    for doc_id, prior_act, indeg in stale:
+    for doc_id, recent, hist_total, indeg, dropoff in stale:
         title = titles.get(doc_id, "[unknown]")
         flags = []
         if indeg > 0:
             flags.append(f"{indeg} inbound links")
-        if prior_act > 0:
-            flags.append(f"{prior_act} prior activity")
+        flags.append(f"avg {stale_act[doc_id]['history_daily_avg']:.1f}/day historically")
         print(f"  {title}  ({', '.join(flags)})")
 
     print_section("External Link Map (top domains)")

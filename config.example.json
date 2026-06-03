@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy this file to config.json and edit to match your org's tools. config.json is gitignored.",
+  "path_significant_domains": [
+    "github.com",
+    "arxiv.org",
+    "amazon.com",
+    "reddit.com",
+    "goodreads.com"
+  ]
+}
