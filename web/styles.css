@@ -46,9 +46,10 @@ h1 { margin-bottom: 0; color: #3c4043; font-size: 28px; font-weight: 400; letter
 h2 { font-size: 19px; letter-spacing: -.02em; }
 h3 { font-size: 14px; }
 .top-actions { display: flex; gap: 10px; }
-.search-box { display: flex; align-items: center; gap: 8px; width: 300px; padding: 0 14px; border: 0; border-radius: 24px; color: var(--muted); background: #edf2fc; }
+.search-box { display: flex; align-items: center; gap: 8px; width: 300px; padding: 0 14px; border: 1px solid transparent; border-radius: 24px; color: var(--muted); background: #edf2fc; transition: background .15s, border-color .15s, box-shadow .15s; }
+.search-box:focus-within { border-color: #a8c7fa; background: white; box-shadow: 0 1px 2px rgba(60,64,67,.18); }
 .search-box span { font-size: 11px; font-weight: 700; text-transform: uppercase; }
-.search-box input { min-width: 0; width: 100%; padding: 9px 0; border: 0; outline: 0; }
+.search-box input { min-width: 0; width: 100%; padding: 9px 0; border: 0; outline: 0; color: var(--ink); background: transparent; appearance: none; }
 .icon-button, .button { border: 1px solid var(--line); border-radius: 20px; background: white; }
 .icon-button { width: 39px; }
 .button { padding: 9px 13px; font-weight: 650; }
