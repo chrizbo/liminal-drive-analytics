@@ -4,6 +4,14 @@
 
 [![GitHub](https://img.shields.io/badge/github-chrizbo%2Fliminal--drive--analytics-blue?logo=github)](https://github.com/chrizbo/liminal-drive-analytics)
 
+### Who It's For
+
+Operations people and leaders who want to understand how organizational knowledge actually flows — not just who owns what, but what's being used, what's trusted, and what's drifting.
+
+### Philosophy
+
+This project is an extension of the Living Documents concept from [Agentics Beyond Code](https://github.com/chrizbo/agentics-beyond-code): documents aren't static artifacts, they're living signals of organizational activity. By connecting them into a graph and tracking how that graph changes over time, you get a dynamic picture of what the org knows, values, and is actively working on.
+
 ## Screenshots
 
 | Overview with Leader Brief | Terminology Drift in Brief |
@@ -45,14 +53,6 @@ Liminal Drive Analytics builds a live graph of your organization's documents and
 **Background indexing** — request a fresh index from **Settings** and follow its active phase, current document, and progress without leaving the web app.
 
 **Local settings** — configure the OpenAI model and path-significant external-link domains from the web app. Settings are persisted to `config.json`.
-
-### Who It's For
-
-Operations people and leaders who want to understand how organizational knowledge actually flows — not just who owns what, but what's being used, what's trusted, and what's drifting.
-
-## Philosophy
-
-This project is an extension of the Living Documents concept from [Agentics Beyond Code](https://github.com/chrizbo/agentics-beyond-code): documents aren't static artifacts, they're living signals of organizational activity. By connecting them into a graph and tracking how that graph changes over time, you get a dynamic picture of what the org knows, values, and is actively working on.
 
 ## Project Structure
 
