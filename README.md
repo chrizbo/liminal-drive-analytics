@@ -26,10 +26,6 @@ This project is an extension of the Living Documents concept from [Agentics Beyo
 |---|---|
 | ![Graph](docs/screenshots/graph.png) | ![Doc Detail](docs/screenshots/doc-detail.png) |
 
-| Settings |
-|---|
-| ![Settings](docs/screenshots/settings.png) |
-
 ## What It Does
 
 Liminal Drive Analytics builds a live graph of your organization's documents and the connections between them — links, activity, authorship — and surfaces patterns that are invisible when you look at documents one at a time.
