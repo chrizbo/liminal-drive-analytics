@@ -28,6 +28,9 @@ def test_init_creates_tables(tmp_db):
     assert "external_resources" in tables
     assert "activity_snapshots" in tables
     assert "persons" in tables
+    assert "findings" in tables
+    assert "finding_review_events" in tables
+    assert "briefs" in tables
     conn.close()
 
 def test_init_is_idempotent(tmp_db):
@@ -117,3 +120,14 @@ def test_empty_graph(tmp_db):
     G = graph_module.build_doc_graph(conn)
     assert G.number_of_nodes() == 0
     conn.close()
+
+
+def test_connect_accepts_explicit_database_path(tmp_path):
+    import db
+    explicit = str(tmp_path / "explicit.db")
+    conn = db.connect(explicit)
+    db.init(conn)
+    conn.execute("INSERT INTO persons (id, email, display_name) VALUES ('p', '', 'Person')")
+    conn.commit()
+    conn.close()
+    assert os.path.exists(explicit)

@@ -11,11 +11,13 @@ Or from the src/ directory:
 """
 
 import os
+import secrets
 import sys
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -24,9 +26,13 @@ from graph import build_doc_graph, in_degree_rank, communities
 from analytics import (
     activity_by_doc, stale_activity, title_map,
     rising_docs, stale_docs,
-    STALE_WINDOW_DAYS, STALE_RECENT_MAX,
 )
-from utils import doc_url, direness_score, severity_label
+from utils import doc_url
+from operations import (
+    DISPOSITIONS, FINDING_STATUSES, SIGNAL_TYPES,
+    detect_findings, generate_brief, get_brief, get_finding, latest_brief, list_findings,
+    refresh_findings, update_review,
+)
 
 app = FastAPI(
     title="Liminal Drive Analytics API",
@@ -36,8 +42,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten for production
-    allow_methods=["GET"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("DRIVE_ANALYTICS_CORS_ORIGINS", "*").split(",")
+        if origin.strip()
+    ],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -48,6 +58,32 @@ def get_conn():
     conn = connect()
     init(conn)
     return conn
+
+
+def require_write_token(x_admin_token: Optional[str] = Header(default=None)):
+    expected = os.environ.get("DRIVE_ANALYTICS_WRITE_TOKEN")
+    if not expected or not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
+        raise HTTPException(status_code=401, detail="Valid X-Admin-Token required")
+
+
+class ReviewUpdate(BaseModel):
+    status: Optional[str] = None
+    disposition: Optional[str] = None
+    reviewer: Optional[str] = None
+    assignee: Optional[str] = None
+    note: Optional[str] = None
+    follow_up_date: Optional[str] = None
+
+
+class FindingsRefreshRequest(BaseModel):
+    recent_days: int = 7
+    prior_days: int = 7
+
+
+class BriefGenerateRequest(BaseModel):
+    days: int = 7
+    polish: bool = False
+    model: Optional[str] = None
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
@@ -234,60 +270,107 @@ def analytics_hubs(limit: int = 20):
 def analytics_needs_attention(recent_days: int = 7, prior_days: int = 7, limit: int = 30):
     """Prioritized list of documents that warrant a look, with severity and suggested action."""
     conn = get_conn()
-    titles   = title_map(conn)
-    mimes    = {r["id"]: r["mime_type"] or "" for r in conn.execute("SELECT id, mime_type FROM documents")}
-    web_urls = {r["id"]: r["web_url"] or "" for r in conn.execute("SELECT id, web_url FROM documents")}
-    activity  = activity_by_doc(conn, days_recent=recent_days, days_prior=prior_days)
-    stale_act = stale_activity(conn)
-    G = build_doc_graph(conn)
-    in_deg = dict(in_degree_rank(G))
+    items = detect_findings(conn, recent_days=recent_days, prior_days=prior_days)
     conn.close()
-
-    items = []
-    seen  = set()
-
-    for doc_id, deg in sorted(in_deg.items(), key=lambda x: x[1], reverse=True):
-        if doc_id not in titles or deg == 0:
-            continue
-        if activity.get(doc_id, {}).get("recent", 0) == 0:
-            score = direness_score("high", in_deg_count=deg)
-            items.append({
-                "id": doc_id, "title": titles[doc_id],
-                "url": doc_url(doc_id, web_urls.get(doc_id,""), mimes.get(doc_id,"")),
-                "score": score, "severity": severity_label(score),
-                "signal": f"Stale hub — {deg} doc{'s' if deg!=1 else ''} link here",
-                "action": "Review accuracy or add a deprecation notice",
-            })
-            seen.add(doc_id)
-
-    from analytics import rising_docs as _rising
-    for doc_id, gain, rec, pri in _rising(activity, titles, limit * 2):
-        if doc_id in seen or doc_id not in titles: continue
-        score = direness_score("medium", gain=gain)
-        items.append({
-            "id": doc_id, "title": titles[doc_id],
-            "url": doc_url(doc_id, web_urls.get(doc_id,""), mimes.get(doc_id,"")),
-            "score": score, "severity": severity_label(score),
-            "signal": f"Rising — +{gain} activity ({pri}→{rec})",
-            "action": "Good time to review, update, or link from an index doc",
-        })
-        seen.add(doc_id)
-
-    for doc_id, recent, hist_total, indeg, dropoff in stale_docs(stale_act, list(in_deg.items()), titles, limit*2):
-        if doc_id in seen or doc_id not in titles: continue
-        score = direness_score("low", prior_act=hist_total)
-        hist_avg = stale_act[doc_id]["history_daily_avg"]
-        items.append({
-            "id": doc_id, "title": titles[doc_id],
-            "url": doc_url(doc_id, web_urls.get(doc_id,""), mimes.get(doc_id,"")),
-            "score": score, "severity": severity_label(score),
-            "signal": f"Went quiet — was {hist_avg:.1f}/day, now ≤{STALE_RECENT_MAX} in {STALE_WINDOW_DAYS}d",
-            "action": "Archive, update, or leave as-is if complete",
-        })
-        seen.add(doc_id)
-
     items.sort(key=lambda x: x["score"], reverse=True)
-    return items[:limit]
+    return [
+        {
+            "id": item["document_id"],
+            "title": item["document_title"],
+            "url": item["document_url"],
+            "score": item["score"],
+            "severity": item["severity"],
+            "signal": item["signal"],
+            "action": item["suggested_action"],
+            "evidence": item["metrics"],
+        }
+        for item in items[:limit]
+    ]
+
+
+# ── Operational findings and briefs ──────────────────────────────────────────
+
+@app.get("/findings")
+def findings_list(status: Optional[str] = None,
+                  active: Optional[bool] = None,
+                  signal_type: Optional[str] = None,
+                  assignee: Optional[str] = None,
+                  severity: Optional[str] = None,
+                  limit: int = 100):
+    if status and status not in FINDING_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    if signal_type and signal_type not in SIGNAL_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid signal_type")
+    conn = get_conn()
+    result = list_findings(conn, status, active, signal_type, assignee, severity, limit)
+    conn.close()
+    return result
+
+
+@app.get("/findings/{finding_id}")
+def finding_detail(finding_id: str):
+    conn = get_conn()
+    result = get_finding(conn, finding_id)
+    conn.close()
+    if not result:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return result
+
+
+@app.patch("/findings/{finding_id}/review", dependencies=[Depends(require_write_token)])
+def finding_review(finding_id: str, body: ReviewUpdate):
+    values = body.model_dump(exclude_unset=True)
+    if values.get("status") and values["status"] not in FINDING_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    if values.get("disposition") and values["disposition"] not in DISPOSITIONS:
+        raise HTTPException(status_code=400, detail="Invalid disposition")
+    conn = get_conn()
+    try:
+        result = update_review(conn, finding_id, values)
+    except ValueError as exc:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(exc))
+    conn.close()
+    if not result:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return result
+
+
+@app.post("/findings/refresh", dependencies=[Depends(require_write_token)])
+def findings_refresh(body: FindingsRefreshRequest):
+    conn = get_conn()
+    result = refresh_findings(conn, body.recent_days, body.prior_days)
+    conn.close()
+    return result
+
+
+@app.get("/briefs/latest")
+def brief_latest():
+    conn = get_conn()
+    result = latest_brief(conn)
+    conn.close()
+    if not result:
+        raise HTTPException(status_code=404, detail="No briefs generated")
+    return result
+
+
+@app.get("/briefs/{brief_id}")
+def brief_detail(brief_id: str):
+    conn = get_conn()
+    result = get_brief(conn, brief_id)
+    conn.close()
+    if not result:
+        raise HTTPException(status_code=404, detail="Brief not found")
+    return result
+
+
+@app.post("/briefs/generate", dependencies=[Depends(require_write_token)])
+def brief_generate(body: BriefGenerateRequest):
+    conn = get_conn()
+    refresh_findings(conn, recent_days=body.days, prior_days=body.days)
+    result = generate_brief(conn, days=body.days, polish=body.polish, model=body.model)
+    conn.close()
+    return result
 
 
 # ── Graph ─────────────────────────────────────────────────────────────────────

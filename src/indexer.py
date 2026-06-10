@@ -16,6 +16,8 @@ warnings.filterwarnings("ignore")
 from tqdm import tqdm
 from auth import get_credentials, build_services
 from db import connect, init
+from operations import refresh_findings
+from sources import register_shared_drive, resolve_shared_drive, shared_drive_db_path
 
 
 def _handle_interrupt(sig, frame):
@@ -381,10 +383,31 @@ def fetch_file_meta(drive_svc, file_id):
     try:
         return drive_svc.files().get(
             fileId=file_id,
-            fields="id, name, mimeType, createdTime, modifiedTime, owners, webViewLink",
+            fields="id, name, mimeType, createdTime, modifiedTime, owners, webViewLink, driveId",
+            supportsAllDrives=True,
         ).execute()
     except Exception:
         return None
+
+
+def drive_list_args(query, page_token=None, source=None):
+    args = {
+        "q": query,
+        "pageSize": 100,
+        "fields": (
+            "nextPageToken, files(id, name, mimeType, createdTime, modifiedTime, "
+            "owners, webViewLink, driveId)"
+        ),
+        "pageToken": page_token,
+    }
+    if source:
+        args.update({
+            "corpora": "drive",
+            "driveId": source["id"],
+            "includeItemsFromAllDrives": True,
+            "supportsAllDrives": True,
+        })
+    return args
 
 
 def resolve_people(people_svc, conn, verbose=False):
@@ -435,10 +458,12 @@ def resolve_people(people_svc, conn, verbose=False):
     print(f"Resolved {resolved} of {len(unresolved)} person IDs.")
 
 
-def run(days, verbose, expand=False):
+def run(days, verbose, expand=False, shared_drive=None):
     creds = get_credentials()
     drive_svc, docs_svc, slides_svc, activity_svc, people_svc = build_services(creds)
-    conn = connect()
+    source = resolve_shared_drive(drive_svc, shared_drive) if shared_drive else None
+    database_path = shared_drive_db_path(source["id"]) if source else None
+    conn = connect(database_path)
     init(conn)
 
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -450,16 +475,13 @@ def run(days, verbose, expand=False):
     )
     query = f"({mime_filter}) and modifiedTime > '{since}' and trashed=false"
 
-    print(f"Fetching files modified in the last {days} days...")
+    source_label = f"Shared Drive '{source['name']}'" if source else "Drive"
+    print(f"Fetching files from {source_label} modified in the last {days} days...")
     files = []
     page_token = None
     while True:
-        resp = drive_svc.files().list(
-            q=query,
-            pageSize=100,
-            fields="nextPageToken, files(id, name, mimeType, createdTime, modifiedTime, owners, webViewLink)",
-            pageToken=page_token,
-        ).execute()
+        list_args = drive_list_args(query, page_token, source)
+        resp = drive_svc.files().list(**list_args).execute()
         files.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
         if not page_token:
@@ -487,6 +509,8 @@ def run(days, verbose, expand=False):
                     meta = fetch_file_meta(drive_svc, file_id)
                     if not meta:
                         continue
+                    if source and meta.get("driveId") != source["id"]:
+                        continue
                     mime = meta.get("mimeType", "")
                     if mime not in ("application/vnd.google-apps.document", "application/vnd.google-apps.presentation"):
                         continue
@@ -496,8 +520,15 @@ def run(days, verbose, expand=False):
             print("\nNo unindexed linked docs found.")
 
     resolve_people(people_svc, conn, verbose)
+    result = refresh_findings(conn)
+    print(
+        f"Operational findings: {result['created']} created, "
+        f"{result['updated']} updated, {result['deactivated']} deactivated."
+    )
     conn.close()
-    print(f"\nDone. data/graph.db is up to date.")
+    if source:
+        register_shared_drive(source["id"], source["name"], database_path)
+    print(f"\nDone. {database_path or 'data/graph.db'} is up to date.")
 
 
 def reclassify(verbose=False):
@@ -526,6 +557,10 @@ if __name__ == "__main__":
     parser.add_argument("--reclassify", action="store_true", help="Re-run domain classification on all stored external links")
     parser.add_argument("--resolve-people", action="store_true", help="Resolve person IDs to names/emails via People API")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show each file as it's indexed")
+    parser.add_argument(
+        "--shared-drive",
+        help="Shared Drive root URL/ID, or a folder URL/ID inside a Shared Drive",
+    )
     args = parser.parse_args()
     if args.reclassify:
         reclassify(args.verbose)
@@ -537,4 +572,4 @@ if __name__ == "__main__":
         resolve_people(people_svc, conn, args.verbose)
         conn.close()
     else:
-        run(args.days, args.verbose, args.expand)
+        run(args.days, args.verbose, args.expand, args.shared_drive)

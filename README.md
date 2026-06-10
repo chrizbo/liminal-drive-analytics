@@ -30,6 +30,10 @@ Liminal Drive Analytics builds a live graph of your organization's documents and
 
 **Ontology tracking** — common terminology extracted from document content over time. Tracks which terms are rising, declining, or inconsistently defined across the org.
 
+**Leader Brief** — a persisted weekly narrative built from operational findings. Every claim expands into the documents and metrics that support it. An optional OpenAI pass can polish the prose without changing evidence references.
+
+**Ops Review** — a durable review queue for stale hubs, rising documents, and documents that went quiet. Reviewers can assign, annotate, resolve, dismiss, and schedule follow-up without modifying source documents.
+
 ### Who It's For
 
 Operations people and leaders who want to understand how organizational knowledge actually flows — not just who owns what, but what's being used, what's trusted, and what's drifting.
@@ -71,6 +75,14 @@ cp config.example.json config.json
 # Edit config.json to add domain-specific settings for your org
 ```
 
+Optional environment variables:
+
+```bash
+export OPENAI_API_KEY=...                 # enables Leader Brief polishing
+export DRIVE_ANALYTICS_WRITE_TOKEN=...   # protects FastAPI POST/PATCH endpoints
+export DRIVE_ANALYTICS_CORS_ORIGINS=http://localhost:3000
+```
+
 ### 4. Authenticate
 ```bash
 python3 src/auth.py --verify
@@ -81,15 +93,41 @@ python3 src/auth.py --verify
 python3 src/indexer.py --days 90 --expand
 ```
 
+To index a particular Shared Drive into its own selectable workspace, pass its
+root URL, ID, or any folder URL inside it:
+
+```bash
+python3 src/indexer.py --shared-drive "https://drive.google.com/drive/folders/0AP6VPalWOTU-Uk9PVA" --days 365 --expand
+```
+
+Indexed Shared Drives appear by name in the dashboard Workspace selector. Their
+documents and operational findings remain isolated from personal Drive data.
+
 ### 6. Launch the dashboard
 ```bash
 streamlit run src/dashboard.py
+```
+
+The dashboard opens in **Demo product team** mode by default. This creates an isolated fictional Northstar product-team workspace showing an Orbit Mobile launch, realistic document relationships, activity signals, operational findings, and a ready-made Leader Brief. Switch to **Live Drive** in the sidebar to use indexed Drive data.
+
+Reset or prepare the demo dataset from the command line:
+
+```bash
+python3 src/demo_data.py
 ```
 
 ### Running tests
 ```bash
 python3 -m pytest
 ```
+
+### Running the API
+
+```bash
+uvicorn src.api:app --reload
+```
+
+Operational writes require the configured token in the `X-Admin-Token` header. Read endpoints remain unauthenticated for local use.
 
 ## Hosting
 

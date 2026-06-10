@@ -12,12 +12,18 @@ import streamlit as st
 from pyvis.network import Network
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db import connect
+from db import DB_PATH, DEMO_DB_PATH, connect, init
+from demo_data import reset_demo_database
 from graph import build_doc_graph, in_degree_rank, communities
 from analytics import (activity_by_doc, stale_activity, title_map,
-                       rising_docs, stale_docs, _stale_docs_compat,
+                       rising_docs, stale_docs,
                        STALE_WINDOW_DAYS, STALE_RECENT_MAX)
-from utils import doc_url, mime_icon, direness_score, severity_label
+from utils import doc_url, mime_icon
+from operations import (
+    DISPOSITIONS, FINDING_STATUSES, generate_brief, get_finding, latest_brief, list_findings,
+    refresh_findings, update_review,
+)
+from sources import load_sources
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -113,8 +119,10 @@ def _render_doc_detail_inline(selected_id, data, context):
 # ── Load data (cached) ────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=300)
-def load_data(recent_days, prior_days):
-    conn = connect()
+def load_data(recent_days, prior_days, database_path):
+    conn = connect(database_path)
+    init(conn)
+    refresh_findings(conn, recent_days=recent_days, prior_days=prior_days)
 
     titles = title_map(conn)
     mimes = {row["id"]: row["mime_type"] or "" for row in conn.execute(
@@ -258,6 +266,12 @@ def load_data(recent_days, prior_days):
             "Last seen": row["last_seen"][:10] if row["last_seen"] else "",
         })
 
+    operational_findings = [
+        get_finding(conn, finding["id"])
+        for finding in list_findings(conn, limit=1000)
+    ]
+    current_brief = latest_brief(conn)
+
     # ── Node status sets for graph coloring ──────────────────────────────────
     rising_ids = {d for d, *_ in rising_docs(activity, titles, top_n=9999)}
     stale_hub_ids = set()
@@ -308,80 +322,49 @@ def load_data(recent_days, prior_days):
         "owner_by_email": owner_by_email,
         "top_editors": top_editors,
         "doc_editors": doc_editors,
+        "operational_findings": operational_findings,
+        "findings_by_id": {finding["id"]: finding for finding in operational_findings},
+        "current_brief": current_brief,
     }
+BRIEF_SECTION_LABELS = {
+    "what_changed": "What changed",
+    "follow_ups": "Decisions and follow-ups",
+    "knowledge_risks": "Knowledge risks",
+    "recently_reviewed": "Recently reviewed",
+}
 
 
-
-
-def needs_attention(data, recent_days, top_n=15):
-    """Single prioritized list combining stale hub, rising, and orphan signals."""
-    activity = data["activity"]
-    in_deg   = data["in_deg"]
-    titles   = data["titles"]
-    urls     = data["urls"]
-
-    items = []
-    seen  = set()
-
-    # Stale hubs — highest priority
-    for doc_id, deg in sorted(in_deg.items(), key=lambda x: x[1], reverse=True):
-        if doc_id not in titles or deg == 0:
+def render_leader_brief(brief, findings_by_id):
+    if not brief:
+        st.info("No Leader Brief has been generated yet.")
+        return
+    content = brief["polished"] or brief["deterministic"]
+    source = f"Polished with {brief['model']}" if brief["polished"] else "Deterministic"
+    st.caption(
+        f"{brief['window_start']} to {brief['window_end']} · {source} · "
+        f"generated {brief['created_at'][:16].replace('T', ' ')} UTC"
+    )
+    for section, label in BRIEF_SECTION_LABELS.items():
+        claims = content.get("sections", {}).get(section, [])
+        if not claims:
             continue
-        counts = activity.get(doc_id, {"recent": 0, "prior": 0})
-        if counts["recent"] == 0:
-            score = direness_score("high", in_deg_count=deg)
-            items.append({
-                "_score": score,
-                "_url": urls.get(doc_id, ""),
-                "Severity": severity_label(score),
-                "Priority": "🔴 High",
-                "Document": titles[doc_id],
-                "Signal": f"Stale hub — {deg} doc{'s' if deg != 1 else ''} link here",
-                "Action": "Review accuracy or add a deprecation notice",
-                "_id": doc_id,
-            })
-            seen.add(doc_id)
-
-    # Rising docs
-    rising = rising_docs(activity, titles, top_n * 2)
-    for doc_id, gain, rec, pri in rising:
-        if doc_id in seen or doc_id not in titles:
-            continue
-        score = direness_score("medium", gain=gain)
-        items.append({
-            "_score": score,
-            "_url": urls.get(doc_id, ""),
-            "Severity": severity_label(score),
-            "Priority": "🟡 Medium",
-            "Document": titles[doc_id],
-            "Signal": f"Rising — +{gain} activity ({pri}→{rec})",
-            "Action": "Good time to review, update, or link from an index doc",
-            "_id": doc_id,
-        })
-        seen.add(doc_id)
-
-    # Stale with prior activity
-    stale = stale_docs(data["stale_act"], list(in_deg.items()), titles, top_n * 2)
-    for doc_id, recent, hist_total, indeg, dropoff in stale:
-        if doc_id in seen or doc_id not in titles:
-            continue
-        hist_avg = data["stale_act"][doc_id]["history_daily_avg"]
-        score = direness_score("low", prior_act=hist_total)
-        items.append({
-            "_score": score,
-            "_url": urls.get(doc_id, ""),
-            "Severity": severity_label(score),
-            "Priority": "🔵 Low",
-            "Document": titles[doc_id],
-            "Signal": f"Went quiet — was {hist_avg:.1f}/day, now ≤{STALE_RECENT_MAX} in {STALE_WINDOW_DAYS}d",
-            "Action": "Archive, update, or leave as-is if complete",
-            "_id": doc_id,
-        })
-        seen.add(doc_id)
-
-    # Sort by score descending
-    items.sort(key=lambda x: x["_score"], reverse=True)
-    return items[:top_n]
+        st.markdown(f"**{label}**")
+        for index, claim in enumerate(claims):
+            evidence_ids = claim.get("evidence_ids", [])
+            st.markdown(f"- {claim['text']}")
+            if evidence_ids:
+                with st.expander(f"Evidence · {len(evidence_ids)} item(s)", expanded=False):
+                    for finding_id in evidence_ids:
+                        finding = findings_by_id.get(finding_id)
+                        if not finding:
+                            st.caption(f"Evidence record {finding_id} is unavailable.")
+                            continue
+                        evidence = finding["evidence"]
+                        title = evidence.get("document_title", finding["document_id"])
+                        url = evidence.get("document_url", "")
+                        signal = evidence.get("signal", finding["signal_type"])
+                        st.markdown(f"**[{title}]({url})** — {signal}" if url else f"**{title}** — {signal}")
+                        st.json(evidence.get("metrics", {}), expanded=False)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -389,6 +372,46 @@ def needs_attention(data, recent_days, top_n=15):
 st.sidebar.title("🔗 Liminal Drive Analytics")
 st.sidebar.markdown("---")
 
+shared_drive_sources = [
+    source for source in load_sources()
+    if os.path.exists(source.get("database_path", ""))
+]
+workspace_paths = {
+    "Demo product team": DEMO_DB_PATH,
+    "Live Drive": DB_PATH,
+}
+for source in shared_drive_sources:
+    workspace_paths[f"Shared Drive · {source['name']}"] = source["database_path"]
+
+data_mode = st.sidebar.radio(
+    "Workspace",
+    list(workspace_paths),
+    help="Demo mode uses a separate fictional dataset and never reads or changes your Drive data.",
+)
+database_path = workspace_paths[data_mode]
+is_demo = data_mode == "Demo product team"
+is_shared_drive = data_mode.startswith("Shared Drive · ")
+
+if is_demo and not os.path.exists(DEMO_DB_PATH):
+    reset_demo_database()
+
+if is_demo:
+    st.sidebar.caption("Fictional Northstar product team · Orbit Mobile launch")
+    if st.sidebar.button("Reset demo data", use_container_width=True):
+        reset_demo_database()
+        load_data.clear()
+        st.rerun()
+elif is_shared_drive:
+    selected_source = next(
+        source for source in shared_drive_sources
+        if source["database_path"] == database_path
+    )
+    st.sidebar.caption(
+        f"Shared Drive ID: {selected_source['id']} · indexed "
+        f"{selected_source.get('indexed_at', '')[:10]}"
+    )
+
+st.sidebar.markdown("---")
 recent_days = st.sidebar.slider("Recent window (days)", 3, 30, 7)
 prior_days  = st.sidebar.slider("Comparison window (days)", 3, 30, 7)
 top_n       = st.sidebar.slider("Results per section", 5, 25, 10)
@@ -414,19 +437,25 @@ def save_config(cfg):
 cfg = load_config()
 current_domains = "\n".join(cfg.get("path_significant_domains", []))
 
-with st.sidebar.expander("⚙️ Path-significant domains"):
-    st.caption("Domains where the URL path identifies a specific resource (e.g. github.com/org/repo). One domain per line.")
-    new_domains = st.text_area("Domains", value=current_domains, height=180, label_visibility="collapsed")
-    if st.button("Save", key="save_path_domains"):
-        updated = [d.strip() for d in new_domains.splitlines() if d.strip()]
-        cfg["path_significant_domains"] = updated
-        save_config(cfg)
-        st.success(f"Saved {len(updated)} domains. Re-run --reclassify to apply.")
+if not is_demo:
+    with st.sidebar.expander("⚙️ Path-significant domains"):
+        st.caption("Domains where the URL path identifies a specific resource (e.g. github.com/org/repo). One domain per line.")
+        new_domains = st.text_area("Domains", value=current_domains, height=180, label_visibility="collapsed")
+        if st.button("Save", key="save_path_domains"):
+            updated = [d.strip() for d in new_domains.splitlines() if d.strip()]
+            cfg["path_significant_domains"] = updated
+            save_config(cfg)
+            st.success(f"Saved {len(updated)} domains. Re-run --reclassify to apply.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Data refreshes every 5 minutes. Re-run the indexer to pull latest Drive activity.")
+if is_demo:
+    st.sidebar.caption("Demo data is isolated from your Drive and can be reset at any time.")
+elif is_shared_drive:
+    st.sidebar.caption("Re-run the indexer with this Shared Drive URL or ID to refresh its data.")
+else:
+    st.sidebar.caption("Data refreshes every 5 minutes. Re-run the indexer to pull latest Drive activity.")
 
-data = load_data(recent_days, prior_days)
+data = load_data(recent_days, prior_days, database_path)
 titles  = data["titles"]
 urls    = data["urls"]
 mimes   = data["mimes"]
@@ -447,7 +476,7 @@ def close_detail():
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
 tab_overview, tab_attention, tab_graph, tab_external, tab_detail = st.tabs([
-    "📊 Overview", "🎯 Needs Attention", "🕸️ Graph", "🌐 External Links", "📄 Doc Detail"
+    "📊 Overview", "🎯 Ops Review", "🕸️ Graph", "🌐 External Links", "📄 Doc Detail"
 ])
 
 activity      = data["activity"]
@@ -459,6 +488,37 @@ community_map = data["community_map"]
 
 with tab_overview:
     st.header("Overview")
+    if is_demo:
+        st.info(
+            "**Demo workspace:** Northstar's product team is preparing the Orbit Mobile launch. "
+            "Explore the brief, review queue, graph, and document details using fictional data."
+        )
+    brief_col, deterministic_col, polished_col = st.columns([6, 2, 2])
+    with brief_col:
+        st.subheader("Leader Brief")
+    with deterministic_col:
+        if st.button("Generate brief", use_container_width=True):
+            conn = connect(database_path)
+            init(conn)
+            generate_brief(conn, days=recent_days)
+            conn.close()
+            load_data.clear()
+            st.rerun()
+    with polished_col:
+        if st.button("Generate + polish", use_container_width=True):
+            conn = connect(database_path)
+            init(conn)
+            generate_brief(
+                conn, days=recent_days, polish=True,
+                model=cfg.get("openai_model", "gpt-5.4-mini"),
+            )
+            conn.close()
+            load_data.clear()
+            st.rerun()
+
+    render_leader_brief(data["current_brief"], data["findings_by_id"])
+
+    st.markdown("---")
     c1, c2, c3 = st.columns(3)
     c1.metric("Documents indexed", data["doc_count"])
     c2.metric("Doc → doc links",   data["link_count"])
@@ -542,26 +602,98 @@ with tab_overview:
 # ── Needs Attention tab ───────────────────────────────────────────────────────
 
 with tab_attention:
-    st.header("🎯 Needs Attention")
-    st.caption("Prioritized list of documents that warrant a look, based on combined signals.")
+    st.header("Ops Review")
+    st.caption("Review and resolve persistent operational findings. Source documents are never modified.")
 
-    items = needs_attention(data, recent_days, top_n=top_n * 2)
-    if not items:
-        st.success("Nothing urgent right now.")
-    else:
-        rows = [{k: i[k] for k in ["Severity", "Priority", "Document", "_url", "Signal", "Action", "_id"]}
-                for i in items]
-        doc_table(rows, "Document", "_url", ["Severity", "Signal", "Action"], id_col="_id", context="attention", data=data)
+    filter_status, filter_signal, filter_activity = st.columns(3)
+    status_filter = filter_status.multiselect(
+        "Status", sorted(FINDING_STATUSES), default=["new", "in_review"]
+    )
+    signal_filter = filter_signal.multiselect(
+        "Signal", ["stale_hub", "rising", "went_quiet"],
+        default=["stale_hub", "rising", "went_quiet"],
+    )
+    activity_filter = filter_activity.radio(
+        "Activity", ["Active", "All", "Inactive"], horizontal=True
+    )
 
-        st.markdown("---")
-        st.subheader("Signal key")
-        st.markdown("""
-| Priority | Meaning |
-|---|---|
-| 🔴 High | Stale hub — other docs link here but it hasn't been touched recently |
-| 🟡 Medium | Rising — gaining activity fast, worth keeping current |
-| 🔵 Low | Went quiet — was active, now isn't; decide if it's done or drifting |
-""")
+    queue = []
+    for finding in data["operational_findings"]:
+        if status_filter and finding["status"] not in status_filter:
+            continue
+        if signal_filter and finding["signal_type"] not in signal_filter:
+            continue
+        if activity_filter == "Active" and not finding["active"]:
+            continue
+        if activity_filter == "Inactive" and finding["active"]:
+            continue
+        queue.append(finding)
+
+    if not queue:
+        st.success("No findings match the current filters.")
+    for finding in queue[:top_n * 2]:
+        evidence = finding["evidence"]
+        title = evidence.get("document_title", finding["document_id"])
+        signal = evidence.get("signal", finding["signal_type"])
+        marker = "Active" if finding["active"] else "Inactive"
+        with st.expander(
+            f"{finding['severity']} · {title} · {finding['status']} · {marker}",
+            expanded=False,
+        ):
+            left, right = st.columns([2, 1])
+            with left:
+                url = evidence.get("document_url", "")
+                st.markdown(f"**[{title}]({url})**" if url else f"**{title}**")
+                st.write(signal)
+                st.caption(f"Suggested action: {finding['suggested_action']}")
+            with right:
+                st.metric("Score", finding["score"])
+                st.caption(
+                    f"First detected {finding['first_detected_at'][:10]} · "
+                    f"last detected {finding['last_detected_at'][:10]}"
+                )
+            st.json(evidence.get("metrics", {}), expanded=False)
+
+            with st.form(f"review_{finding['id']}"):
+                c_status, c_disposition = st.columns(2)
+                status_options = sorted(FINDING_STATUSES)
+                status = c_status.selectbox(
+                    "Status", status_options,
+                    index=status_options.index(finding["status"]),
+                )
+                disposition_options = [""] + sorted(DISPOSITIONS)
+                current_disposition = finding.get("disposition") or ""
+                disposition = c_disposition.selectbox(
+                    "Disposition", disposition_options,
+                    index=disposition_options.index(current_disposition),
+                )
+                c_reviewer, c_assignee, c_followup = st.columns(3)
+                reviewer = c_reviewer.text_input("Reviewer", value=finding.get("reviewer") or "")
+                assignee = c_assignee.text_input("Assignee", value=finding.get("assignee") or "")
+                follow_up = c_followup.text_input(
+                    "Follow-up date", value=finding.get("follow_up_date") or "",
+                    placeholder="YYYY-MM-DD",
+                )
+                note = st.text_area("Review note", value=finding.get("note") or "")
+                submitted = st.form_submit_button("Save review")
+                if submitted:
+                    conn = connect(database_path)
+                    init(conn)
+                    update_review(conn, finding["id"], {
+                        "status": status,
+                        "disposition": disposition or None,
+                        "reviewer": reviewer,
+                        "assignee": assignee,
+                        "follow_up_date": follow_up,
+                        "note": note,
+                    })
+                    conn.close()
+                    load_data.clear()
+                    st.rerun()
+
+            history = finding.get("review_history", [])
+            if history:
+                st.dataframe(pd.DataFrame(history), width="stretch", hide_index=True)
 
 
 # ── Graph tab ─────────────────────────────────────────────────────────────────

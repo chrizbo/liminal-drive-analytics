@@ -104,6 +104,19 @@ python src/auth.py --verify
 
 This should print a list of your 10 most recently modified Google Docs, confirming that authentication and API access are working.
 
+## Indexing a Shared Drive
+
+The authenticated Google account must be a member of the Shared Drive. Then pass
+the Shared Drive root URL, its ID, or a folder URL inside it:
+
+```bash
+python src/indexer.py --shared-drive "https://drive.google.com/drive/folders/SHARED_DRIVE_ID" --days 365 --expand
+```
+
+Each Shared Drive is indexed into a separate local database and appears as a
+named workspace in the dashboard. Expansion stays within the selected Shared
+Drive.
+
 ---
 
 ## Scopes Granted
