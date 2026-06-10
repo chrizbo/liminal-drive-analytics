@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 
 from db import DEMO_DB_PATH, connect, init
 from operations import generate_brief, list_findings, refresh_findings, update_review
+from ontology import index_doc_terms, refresh_ontology
 
 
 DOC_MIME = "application/vnd.google-apps.document"
@@ -59,6 +60,150 @@ LINKS = [
     ("support", "api-decision"),
     ("old-requirements", "api-decision"), ("launch-plan", "old-requirements"),
 ]
+
+DOC_CONTENT = {
+    "product-strategy": """
+        Northstar Product Strategy 2026. Our mission is to build a trusted platform for enterprise
+        teams that enables sustainable growth through deep user activation. We are enterprise-first
+        in every decision: security, reliability, and compliance come before consumer convenience.
+        Our three pillars are: trusted platform, user activation, and sustainable growth. User
+        activation means a user has completed the core workflow and returned within seven days.
+        Enterprise-first means we will not ship a feature that does not meet our enterprise security
+        bar. Sustainable growth means we do not chase vanity metrics — we chase retention and
+        expansion revenue. Every product decision must trace back to one of these three pillars.
+        The strategy is owned by product leadership and reviewed quarterly. All roadmap items must
+        reference this document and justify alignment with the three pillars. Misalignment between
+        roadmap items and this strategy is a signal to pause and re-evaluate.
+    """,
+    "roadmap": """
+        Q3 Product Roadmap. This roadmap operationalizes the product strategy for Q3. Our primary
+        bets this quarter: improve user activation rates for new enterprise accounts, increase
+        platform reliability to 99.9% uptime, and grow expansion revenue in existing accounts.
+        User activation is our leading indicator — we target 60% of new enterprise accounts
+        completing the core workflow within 14 days of contract start. Platform reliability work
+        includes the mobile API hardening project and the auth layer rewrite. Growth this quarter
+        means deepening usage within accounts, not net new logos. Each initiative below has an
+        owner, a metric, and a link to the supporting spec or decision doc. The roadmap references
+        the product strategy pillars: trusted platform, user activation, sustainable growth.
+    """,
+    "metrics": """
+        Product Metrics Dictionary. This document defines the canonical metrics used across all
+        Northstar product reporting. Activation rate: percentage of new accounts that complete the
+        core workflow within 14 days. D7 retention: percentage of activated users who return on
+        day 7. Trust score: composite of security audit results, uptime, and support resolution
+        time. NPS: net promoter score collected quarterly from enterprise accounts. DAU/MAU ratio:
+        daily active users divided by monthly active users, a measure of engagement depth. MRR:
+        monthly recurring revenue. Expansion MRR: revenue growth within existing accounts.
+        Churn rate: percentage of ARR lost in a period. All product specs and experiments must use
+        these definitions. Do not define activation, retention, or trust score locally in a spec —
+        reference this document.
+    """,
+    "launch-plan": """
+        Orbit Mobile Launch Plan. This document covers the go-live plan for Orbit Mobile. The
+        rollout is phased: internal beta, design partner beta, general availability. User adoption
+        is our primary success metric for launch — we target 40% of beta users adopting the mobile
+        workflow within 30 days. The go-live date is contingent on the auth layer passing security
+        review. Launch readiness includes: support playbook complete, GTM brief approved, pricing
+        finalized. The rollout plan calls for a soft launch with five design partners before
+        general availability. User adoption in beta will be tracked via the Amplitude dashboard.
+        Post-launch, we will monitor adoption weekly and adjust the onboarding flow if adoption
+        falls below 30%. This plan references the Q3 roadmap milestones and the pricing decision.
+    """,
+    "onboarding-spec": """
+        Mobile Onboarding v2 Product Spec. This spec covers the redesigned onboarding flow for
+        Orbit Mobile. The goal is to improve onboarding completion rate — the percentage of new
+        users who finish the setup flow within the first session. Current completion rate is 42%;
+        target is 65%. The setup flow has five steps: account creation, team invite, first project,
+        first integration, and first use of the core feature. We are removing the team invite step
+        from the critical path; it becomes optional. The spec references the mobile onboarding
+        research plan for user research findings. Key design principle: progressive disclosure.
+        Do not front-load configuration. The integration step is optional for individual accounts
+        but required for enterprise. This spec references the mobile API architecture decision for
+        backend constraints on the setup flow state machine.
+    """,
+    "old-requirements": """
+        Orbit Mobile Requirements - Original Draft. This document captures the original
+        requirements for the Orbit Mobile application. The primary goal was to increase user
+        engagement across mobile devices. Key requirements: sign-up flow must complete in under
+        three minutes, user onboarding must include team setup and integrations, engagement metrics
+        will be tracked via daily active users. The product should support both individual and
+        team use cases. Enterprise features include SSO and audit logging. The sign-up flow should
+        be frictionless. User onboarding is the critical path to engagement. These requirements
+        were drafted before the 2026 strategy reset and use the previous product language. Several
+        terms here — engagement, sign-up flow, user onboarding — have since been superseded by
+        the current strategy's vocabulary: user activation, trusted platform, enterprise-first.
+        This document is retained for historical context.
+    """,
+    "api-decision": """
+        Mobile API Architecture Decision. This document records the architectural decision for the
+        Orbit Mobile API layer. We evaluated three options: REST with JWT, GraphQL, and gRPC.
+        Decision: REST with JWT for the mobile client, with a separate internal gRPC layer for
+        service-to-service calls. The auth layer uses short-lived JWT tokens with refresh token
+        rotation. Session management is stateless on the client; the server validates tokens on
+        every request. Rate limiting is enforced at the API gateway: 100 requests per minute per
+        authenticated user, 10 per minute for unauthenticated. The decision prioritizes
+        simplicity for mobile client development and operational observability. The auth layer
+        design was driven by enterprise security requirements and the trusted platform pillar.
+        This decision is referenced by the onboarding spec for the setup flow state machine.
+    """,
+    "experiment": """
+        Activation Experiment Results. This document summarizes the results of the A/B experiment
+        on the mobile onboarding flow, targeting activation rate improvement. Experiment ran for
+        14 days with 800 new users split evenly between control and treatment. Treatment:
+        progressive disclosure in the setup flow, with the integration step deferred. Results:
+        activation rate in treatment group was 61% versus 43% in control — an 18 percentage point
+        lift. D7 retention was 52% for treatment versus 44% for control. The trust score was
+        unaffected. Statistical significance: p < 0.01. Recommendation: ship the treatment as
+        the new default onboarding flow. This experiment references the metrics dictionary
+        definitions for activation rate and D7 retention. The activation rate improvement
+        directly supports the Q3 roadmap target of 60% activation for new enterprise accounts.
+    """,
+    "gtm": """
+        Orbit Mobile GTM Brief. This brief outlines the go-to-market strategy for Orbit Mobile
+        general availability. Our primary motion is product-led with enterprise sales overlay.
+        User adoption in the SMB segment will be driven by self-serve activation. Enterprise
+        accounts will be onboarded through a managed launch with customer success. The messaging
+        platform: Orbit Mobile is the trusted mobile layer for enterprise teams. Key channels:
+        in-app announcements, email to existing accounts, partner co-marketing. We will track
+        adoption and user onboarding completion as the primary launch metrics. The launch campaign
+        is live in HubSpot. Pricing is referenced from the packaging and pricing decision doc.
+        The GTM brief aligns with the go-live plan in the launch plan document. Post-launch
+        reporting will use activation and adoption rates as headline numbers.
+    """,
+    "launch-checklist": """
+        Orbit Mobile Launch Readiness Checklist. This checklist tracks launch readiness across
+        all workstreams. Engineering: auth layer security review complete, rate limiting tested,
+        mobile API load tested at 10x expected traffic. Product: onboarding spec shipped,
+        activation tracking instrumented in Amplitude, support playbook reviewed. GTM: launch
+        campaign approved, design partner briefings complete, pricing page updated. Legal: terms
+        of service updated for mobile, data processing agreement reviewed. The checklist is the
+        go/no-go gate for the rollout. Each item must be marked complete by the responsible owner
+        before the go-live date. The checklist references the launch plan for the rollout phases
+        and the mobile repository for the engineering sign-offs.
+    """,
+    "beta-feedback": """
+        Orbit Mobile Beta Feedback Synthesis. This document synthesizes feedback from the 12-week
+        beta with five design partners. Top themes: onboarding flow too long (8 of 12 partners),
+        integration setup confusing (6 of 12), mobile performance excellent (11 of 12). The
+        onboarding feedback directly motivated the v2 onboarding spec. Design partners report high
+        satisfaction with core feature performance but friction in the setup flow. Three partners
+        flagged the sign-up flow as a barrier for inviting team members. One partner noted that
+        the terminology in the app does not match their internal language for the same concepts.
+        Recommended actions: shorten setup flow, add progressive disclosure, add skip options for
+        optional steps. This synthesis references the mobile onboarding research plan for the
+        broader user research context and the retrospective for lessons learned.
+    """,
+    "weekly": """
+        Product Weekly - June 5. This week's highlights: launch plan is on track for go-live
+        in three weeks. The activation experiment results are in — strong lift, recommending we
+        ship the treatment. Onboarding spec is in final review. The incident review is complete
+        and the auth fix is live. Metrics this week: activation rate up 4 points week-over-week,
+        D7 retention stable. The roadmap is green across all Q3 initiatives. Open items: pricing
+        page copy still in legal review, GTM launch campaign needs final approval. The weekly
+        references the launch plan, roadmap, and beta feedback for context on current status.
+        Next week: go/no-go review for the rollout with all workstream leads.
+    """,
+}
 
 EXTERNALS = [
     ("launch-plan", "https://linear.app/northstar/project/orbit-mobile", "Linear project", "linear.app", "linear"),
@@ -134,7 +279,12 @@ def reset_demo_database(path=DEMO_DB_PATH, now=None):
             "note": "Leadership reviewed the launch-plan spike; the owner will monitor readiness daily.",
             "follow_up_date": (now.date() + timedelta(days=7)).isoformat(),
         }, now=now_str)
+    for doc_id, text in DOC_CONTENT.items():
+        index_doc_terms(conn, doc_id, text)
+    refresh_ontology(conn)
+
     generate_brief(conn, days=7, now=now)
+
     conn.close()
     return path
 

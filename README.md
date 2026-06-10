@@ -1,22 +1,26 @@
 # Liminal Drive Analytics
 
-> A graph-based analytics tool for Google Drive that gives operations leaders a pulse on their organization's knowledge — what's rising, what's stale, what's central, and how terminology is evolving.
+> A graph-based analytics tool for Google Drive that gives operations leaders a pulse on their organization's knowledge — what's rising, what's stale, what's central, and how terminology is drifting across linked documents.
 
 [![GitHub](https://img.shields.io/badge/github-chrizbo%2Fliminal--drive--analytics-blue?logo=github)](https://github.com/chrizbo/liminal-drive-analytics)
 
 ## Screenshots
 
-| Overview | Ops Review |
+| Overview with Leader Brief | Terminology Drift in Brief |
 |---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Ops Review](docs/screenshots/needs-attention.png) |
+| ![Overview](docs/screenshots/overview.png) | ![Terminology Drift](docs/screenshots/terminology-drift.png) |
 
-| Document Graph | Settings |
+| Ops Review | Ops Review Panel |
 |---|---|
-| ![Graph](docs/screenshots/graph.png) | ![Settings](docs/screenshots/settings.png) |
+| ![Ops Review](docs/screenshots/needs-attention.png) | ![Ops Review Panel](docs/screenshots/ops-review-panel.png) |
 
-| Document Detail |
+| Document Graph | Document Detail with Concept Alignment |
+|---|---|
+| ![Graph](docs/screenshots/graph.png) | ![Doc Detail](docs/screenshots/doc-detail.png) |
+
+| Settings |
 |---|
-| ![Doc Detail](docs/screenshots/doc-detail.png) |
+| ![Settings](docs/screenshots/settings.png) |
 
 ## What It Does
 
@@ -32,9 +36,11 @@ Liminal Drive Analytics builds a live graph of your organization's documents and
 
 **External link map** — every link out of Google Docs to external systems (Notion, Jira, GitHub, Confluence, etc.) becomes a typed node in the graph. Surfaces what knowledge lives outside Drive and in what proportions.
 
-**Leader Brief** — an actionable summary built from operational findings. Use **Viewing as** to see rising documents that person may not have viewed, then open the source documents directly. When Drive does not provide attributable viewer activity, the brief clearly falls back to broadly useful recommendations.
+**Leader Brief** — an actionable summary built from operational findings. Use **Viewing as** to see rising documents that person may not have viewed, then open the source documents directly. Document links in the brief open the document detail drawer inline. When Drive does not provide attributable viewer activity, the brief clearly falls back to broadly useful recommendations.
 
-**Ops Review** — a durable review queue for stale hubs, rising documents, and documents that went quiet. Three urgency levels replace opaque numeric scores, and every item links back to its source document. Reviewers can assign, annotate, resolve, dismiss, and schedule follow-up without modifying source documents.
+**Terminology Drift** — the Leader Brief flags linked document pairs where terminology diverges: documents that use different words for the same concepts. Detected deterministically (no LLM required) using term frequency analysis and Jaccard similarity across linked doc pairs. Inspired by the [Getting the Words Right](https://dotwork.com/getting-the-words-right) playbook on representation drift in organizations. See [docs/ontology-roadmap.md](docs/ontology-roadmap.md) for the phased plan toward LLM-enhanced semantic alignment.
+
+**Ops Review** — a durable review queue for stale hubs, rising documents, and documents that went quiet. Three urgency levels replace opaque numeric scores. Click a finding title to open its review panel, which includes the suggested action, review form, document metrics, activity timeline, link graph, and concept alignment — all in one place. Reviewers can assign, annotate, resolve, dismiss, and schedule follow-up without modifying source documents.
 
 **Background indexing** — request a fresh index from **Settings** and follow its active phase, current document, and progress without leaving the web app.
 
@@ -57,6 +63,7 @@ drive-analytics/
 ├── FUTURE_IDEAS.md         # Tabled ideas for later consideration
 ├── docs/
 │   ├── google-setup.md     # How to configure Google APIs and OAuth
+│   ├── ontology-roadmap.md # Phased plan for terminology/semantic alignment
 │   └── screenshots/        # Current web app screenshots
 ├── src/
 │   ├── api.py              # FastAPI app and web/API routes
@@ -64,6 +71,7 @@ drive-analytics/
 │   ├── indexer.py          # Drive crawling, activity, and link extraction
 │   ├── graph.py            # Graph construction and analysis
 │   ├── analytics.py        # Rising/stale/hub detection
+│   ├── ontology.py         # Term extraction and alignment scoring
 │   └── operations.py       # Leader Brief and Ops Review state
 ├── web/
 │   ├── index.html          # Local web app shell

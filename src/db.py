@@ -125,6 +125,24 @@ def init(conn):
             model TEXT,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS doc_terms (
+            doc_id    TEXT NOT NULL,
+            term      TEXT NOT NULL,
+            frequency INTEGER DEFAULT 1,
+            term_type TEXT,
+            PRIMARY KEY (doc_id, term)
+        );
+
+        CREATE TABLE IF NOT EXISTS doc_alignment (
+            src_id          TEXT NOT NULL,
+            dst_id          TEXT NOT NULL,
+            alignment_score REAL,
+            shared_terms    TEXT,
+            divergent_terms TEXT,
+            computed_at     TEXT,
+            PRIMARY KEY (src_id, dst_id)
+        );
     """)
     conn.commit()
 

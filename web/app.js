@@ -109,16 +109,22 @@ function renderBrief(brief, findings, recommendations, people) {
   if (!brief) return `<article class="card brief"><div class="card-header"><div><h2>Leader brief</h2><p>No brief has been generated yet.</p></div><button class="button primary small" data-generate-brief>Generate brief</button></div></article>`;
   const content = brief.polished || brief.deterministic;
   const findingsById = new Map(findings.map(finding => [finding.id, finding]));
-  const labels = { what_changed: "What changed", follow_ups: "Decisions and follow-ups", knowledge_risks: "Knowledge risks", recently_reviewed: "Recently reviewed" };
+  const labels = { what_changed: "What changed", follow_ups: "Decisions and follow-ups", knowledge_risks: "Knowledge risks", terminology_drift: "Terminology drift", recently_reviewed: "Recently reviewed" };
   const sections = Object.entries(content.sections || {}).filter(([, claims]) => claims.length).map(([key, claims]) =>
     `<section class="brief-section"><strong>${labels[key] || key}</strong>${claims.map(c => {
+      if (c.drift) {
+        return `<p>${esc(c.text)}</p><div class="brief-links">
+          <button class="brief-doc-btn" data-doc="${esc(c.drift.src_id)}">${esc(c.drift.src_title)}</button>${c.drift.src_url ? `<a class="brief-doc-ext" href="${esc(c.drift.src_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}
+          <button class="brief-doc-btn" data-doc="${esc(c.drift.dst_id)}">${esc(c.drift.dst_title)}</button>${c.drift.dst_url ? `<a class="brief-doc-ext" href="${esc(c.drift.dst_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}
+        </div>`;
+      }
       const evidence = c.evidence_ids.map(id => findingsById.get(id)).filter(Boolean);
-      return `<p>${esc(c.text)}</p>${evidence.length ? `<div class="brief-links">${evidence.slice(0, 6).map(f => `<a href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">${esc(f.evidence.document_title)} ↗</a>`).join("")}</div>` : ""}`;
+      return `<p>${esc(c.text)}</p>${evidence.length ? `<div class="brief-links">${evidence.slice(0, 6).map(f => `<button class="brief-doc-btn" data-doc="${esc(f.document_id)}">${esc(f.evidence.document_title)}</button>${f.evidence.document_url ? `<a class="brief-doc-ext" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}`).join("")}</div>` : ""}`;
     }).join("")}</section>`
   ).join("");
   const viewerOptions = people.map(person => `<option value="${esc(person.id)}" ${person.id === state.viewerId ? "selected" : ""}>${esc(person.display_name || person.email || person.id)}</option>`).join("");
   const recommendationRows = recommendations.recommendations.map(doc =>
-    `<a class="brief-recommendation" href="${esc(doc.url)}" target="_blank" rel="noreferrer"><span>${esc(doc.title)}</span><small>+${doc.gain} recent activity · read doc ↗</small></a>`
+    `<div class="brief-recommendation"><button class="brief-doc-btn" data-doc="${esc(doc.id)}">${esc(doc.title)}</button><small>+${doc.gain} recent activity</small>${doc.url ? `<a class="brief-doc-ext" href="${esc(doc.url)}" target="_blank" rel="noreferrer" title="Read document">↗</a>` : ""}</div>`
   ).join("");
   const personalizationNote = recommendations.personalized
     ? "Showing rising documents this person has not viewed."
@@ -190,7 +196,7 @@ function findingsMarkup(findings) {
     const level = urgency(f.score);
     return `<div class="finding">
     <div class="urgency ${level.kind}">${level.label}</div>
-    <div><h3>${esc(f.evidence.document_title)}</h3><p>${esc(f.evidence.signal)}</p><div class="finding-meta">${badge(f.signal_type)} ${badge(f.status)} ${f.active ? "" : badge("inactive")}</div></div>
+    <div><h3><button class="finding-title-btn" data-finding="${esc(f.id)}">${esc(f.evidence.document_title)}</button></h3><p>${esc(f.evidence.signal)}</p><div class="finding-meta">${badge(f.signal_type)} ${badge(f.status)} ${f.active ? "" : badge("inactive")}</div></div>
     <div class="finding-actions">
       ${f.evidence.document_url ? `<a class="button small" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open doc ↗</a>` : ""}
       <button class="button small" data-finding="${esc(f.id)}">Review</button>
@@ -258,14 +264,35 @@ async function settings() {
 }
 
 async function graph() {
-  const data = await cached("/graph");
-  app.innerHTML = `<div class="filters"><input id="graph-search" placeholder="Focus on a document"><select id="graph-min"><option value="0">All nodes</option><option value="1">1+ inbound</option><option value="2">2+ inbound</option><option value="4">4+ inbound</option></select></div><div class="graph-wrap"><canvas id="graph-canvas"></canvas></div><div class="graph-legend">${["rising","stale_hub","hub","stale","normal"].map(s => `<span><i class="legend-dot" style="background:${graphColors[s]}"></i>${s.replace("_"," ")}</span>`).join("")}</div>`;
-  drawGraph(data);
-  document.querySelector("#graph-min").onchange = event => drawGraph(data, Number(event.target.value));
-  document.querySelector("#graph-search").oninput = event => drawGraph(data, Number(document.querySelector("#graph-min").value), event.target.value);
+  const isDemo = state.workspace === "demo";
+  const [data, alignmentData] = await Promise.all([
+    cached("/graph"),
+    isDemo ? api("/ontology/drift?threshold=1").catch(() => []) : Promise.resolve([]),
+  ]);
+  const alignmentToggle = isDemo ? `<label class="alignment-toggle"><input type="checkbox" id="graph-alignment"> Show alignment</label>` : "";
+  app.innerHTML = `<div class="filters"><input id="graph-search" placeholder="Focus on a document"><select id="graph-min"><option value="0">All nodes</option><option value="1">1+ inbound</option><option value="2">2+ inbound</option><option value="4">4+ inbound</option></select>${alignmentToggle}</div><div class="graph-wrap"><canvas id="graph-canvas"></canvas></div><div class="graph-legend">${["rising","stale_hub","hub","stale","normal"].map(s => `<span><i class="legend-dot" style="background:${graphColors[s]}"></i>${s.replace("_"," ")}</span>`).join("")}${isDemo ? `<span><i class="legend-dot" style="background:#34a853"></i>aligned</span><span><i class="legend-dot" style="background:#fbbc04"></i>partial</span><span><i class="legend-dot" style="background:#ea4335"></i>divergent</span>` : ""}</div>`;
+  const alignMap = buildAlignMap(alignmentData);
+  drawGraph(data, 0, "", false, alignMap);
+  document.querySelector("#graph-min").onchange = e => drawGraph(data, Number(e.target.value), document.querySelector("#graph-search").value, isDemo && document.querySelector("#graph-alignment")?.checked, alignMap);
+  document.querySelector("#graph-search").oninput = e => drawGraph(data, Number(document.querySelector("#graph-min").value), e.target.value, isDemo && document.querySelector("#graph-alignment")?.checked, alignMap);
+  if (isDemo) document.querySelector("#graph-alignment").onchange = e => drawGraph(data, Number(document.querySelector("#graph-min").value), document.querySelector("#graph-search").value, e.target.checked, alignMap);
 }
+
+function buildAlignMap(alignmentData) {
+  const map = new Map();
+  if (!alignmentData || !alignmentData.length) return map;
+  const maxScore = Math.max(...alignmentData.map(a => a.alignment_score || 0), 0.01);
+  alignmentData.forEach(a => {
+    const pct = (a.alignment_score || 0) / maxScore;
+    const color = pct >= 0.7 ? "#34a853" : pct >= 0.4 ? "#fbbc04" : "#ea4335";
+    const key = `${a.src_id}|${a.dst_id}`;
+    map.set(key, color);
+  });
+  return map;
+}
+
 const graphColors = { rising: "#34a853", stale_hub: "#ea4335", hub: "#fbbc04", stale: "#8ab4f8", normal: "#4285f4" };
-function drawGraph(data, minInbound = 0, search = "") {
+function drawGraph(data, minInbound = 0, search = "", showAlignment = false, alignMap = new Map()) {
   const canvas = document.querySelector("#graph-canvas");
   const width = canvas.clientWidth; const height = 620; const scale = devicePixelRatio || 1;
   canvas.width = width * scale; canvas.height = height * scale;
@@ -284,9 +311,16 @@ function drawGraph(data, minInbound = 0, search = "") {
     const ring = 120 + (i % 3) * 75;
     byId.set(node.id, { ...node, x: width / 2 + Math.cos(angle) * Math.min(ring, width * .38), y: height / 2 + Math.sin(angle) * ring, r: 6 + Math.min(node.inbound_links, 8) });
   });
-  ctx.strokeStyle = "#c4c7c5"; ctx.globalAlpha = .72;
-  edges.forEach(e => { const a = byId.get(e.source), b = byId.get(e.target); ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); });
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = .72;
+  edges.forEach(e => {
+    const a = byId.get(e.source), b = byId.get(e.target);
+    if (!a || !b) return;
+    const alignColor = showAlignment ? (alignMap.get(`${e.source}|${e.target}`) || alignMap.get(`${e.target}|${e.source}`) || "#c4c7c5") : "#c4c7c5";
+    ctx.strokeStyle = alignColor;
+    ctx.lineWidth = showAlignment && alignColor !== "#c4c7c5" ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  });
+  ctx.globalAlpha = 1; ctx.lineWidth = 1;
   byId.forEach(n => { ctx.beginPath(); ctx.fillStyle = graphColors[n.status] || graphColors.normal; ctx.arc(n.x,n.y,n.r,0,Math.PI*2); ctx.fill(); if (n.inbound_links > 1 || matches) { ctx.fillStyle="#3c4043"; ctx.font="11px Arial, sans-serif"; ctx.fillText(n.title.slice(0,28),n.x+n.r+5,n.y+4); } });
   canvas.onclick = event => {
     const box = canvas.getBoundingClientRect(); const x = event.clientX - box.left, y = event.clientY - box.top;
@@ -302,7 +336,11 @@ function lineChart(history) {
   return values.length ? `<svg class="line-chart" viewBox="0 0 580 140" preserveAspectRatio="none"><polyline class="area" points="10,130 ${points} 570,130"></polyline><polyline points="${points}"></polyline></svg>` : empty("No activity history.");
 }
 async function openDocument(id) {
-  const doc = await api(`/documents/${encodeURIComponent(id)}`);
+  const isDemo = state.workspace === "demo";
+  const [doc, alignment] = await Promise.all([
+    api(`/documents/${encodeURIComponent(id)}`),
+    isDemo ? api(`/ontology/alignment/${encodeURIComponent(id)}`).catch(() => []) : Promise.resolve([]),
+  ]);
   drawerContent.innerHTML = `<p class="eyebrow">Document detail</p><h2 class="drawer-title">${esc(doc.title)}</h2><p class="muted">${esc(doc.owner_email || "No owner")} · modified ${esc((doc.modified_at || "").slice(0,10) || "unknown")}</p>
     <p><a class="button dark small" href="${esc(doc.url)}" target="_blank" rel="noreferrer">Open source document</a></p>
     <div class="grid detail-metrics"><div class="detail-metric"><strong>${doc.inbound_links.length}</strong><small>Inbound links</small></div><div class="detail-metric"><strong>${doc.outbound_links.length}</strong><small>Outbound links</small></div><div class="detail-metric"><strong>${doc.contributors.length}</strong><small>Contributors</small></div></div>
@@ -310,21 +348,53 @@ async function openDocument(id) {
     <section class="detail-section"><h3>Linked from</h3>${doc.inbound_links.length ? `<ul>${doc.inbound_links.map(x => `<li><button data-doc="${esc(x.src_id)}">${esc(x.title || x.src_id)}</button></li>`).join("")}</ul>` : `<p class="muted">Nothing links here.</p>`}</section>
     <section class="detail-section"><h3>Links to</h3>${doc.outbound_links.length ? `<ul>${doc.outbound_links.map(x => `<li><button data-doc="${esc(x.dst_id)}">${esc(x.title || x.dst_id)}</button></li>`).join("")}</ul>` : `<p class="muted">No outbound links.</p>`}</section>
     <section class="detail-section"><h3>Contributors</h3>${doc.contributors.length ? doc.contributors.map(x => `<p>${esc(x.display_name || x.email || x.person_id)} · ${esc(x.action)} × ${x.count}</p>`).join("") : `<p class="muted">No contributor activity.</p>`}</section>
-    <section class="detail-section"><h3>External links</h3>${doc.external_links.length ? doc.external_links.map(x => `<p><a href="${esc(x.url)}" target="_blank" rel="noreferrer">${esc(x.anchor_text || x.domain)}</a> · ${esc(x.domain)}</p>`).join("") : `<p class="muted">No external links.</p>`}</section>`;
+    <section class="detail-section"><h3>External links</h3>${doc.external_links.length ? doc.external_links.map(x => `<p><a href="${esc(x.url)}" target="_blank" rel="noreferrer">${esc(x.anchor_text || x.domain)}</a> · ${esc(x.domain)}</p>`).join("") : `<p class="muted">No external links.</p>`}</section>
+    ${isDemo && alignment.length ? alignmentSection(alignment) : ""}`;
   drawer.showModal();
 }
+
+function alignmentSection(alignment) {
+  const maxScore = Math.max(...alignment.map(a => a.alignment_score || 0), 0.01);
+  const rows = alignment.map(a => {
+    const pct = Math.round(((a.alignment_score || 0) / maxScore) * 100);
+    const color = pct >= 70 ? "#34a853" : pct >= 40 ? "#fbbc04" : "#ea4335";
+    const label = pct >= 70 ? "aligned" : pct >= 40 ? "partial" : "divergent";
+    const divergent = (a.divergent_terms || []).slice(0, 6).join(", ");
+    const dir = a.direction === "outbound" ? "→" : "←";
+    return `<div class="alignment-row">
+      <div class="alignment-meta"><span class="alignment-dir">${dir}</span><button class="alignment-title" data-doc="${esc(a.linked_doc_id)}">${esc(a.linked_doc_title)}</button></div>
+      <div class="alignment-bar-wrap" title="${pct}% alignment"><div class="alignment-bar" style="width:${pct}%;background:${color}"></div></div>
+      <span class="alignment-label" style="color:${color}">${label}</span>
+      ${divergent ? `<p class="alignment-divergent">Terms not in linked doc: <em>${esc(divergent)}</em></p>` : ""}
+    </div>`;
+  }).join("");
+  return `<section class="detail-section"><h3>Concept alignment <span class="demo-badge">demo</span></h3>
+    <p class="muted small">How closely this document's key terms align with linked documents. Lower alignment may indicate terminology drift.</p>
+    <div class="alignment-list">${rows}</div></section>`;
+}
 async function openFinding(id) {
+  const isDemo = state.workspace === "demo";
   const f = await api(`/findings/${encodeURIComponent(id)}`);
+  const docId = f.document_id;
+  const [doc, alignment] = await Promise.all([
+    api(`/documents/${encodeURIComponent(docId)}`),
+    isDemo ? api(`/ontology/alignment/${encodeURIComponent(docId)}`).catch(() => []) : Promise.resolve([]),
+  ]);
   const level = urgency(f.score);
-  drawerContent.innerHTML = `<p class="eyebrow">Operational finding</p><h2 class="drawer-title">${esc(f.evidence.document_title)}</h2><p>${esc(f.evidence.signal)}</p><p>${badge(level.label)} ${badge(f.signal_type)} ${badge(f.status)}</p>
-    ${f.evidence.document_url ? `<p><a class="button dark small" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open source document ↗</a></p>` : ""}
+  drawerContent.innerHTML = `<p class="eyebrow">Operational finding</p><h2 class="drawer-title">${esc(f.evidence.document_title)}</h2>
+    <div class="finding-header-meta">${badge(level.label)} ${badge(f.signal_type)} ${badge(f.status)} <span class="muted finding-signal">${esc(f.evidence.signal)}</span>${f.evidence.document_url ? `<a class="finding-ext-link" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open doc ↗</a>` : ""}</div>
     <section class="detail-section"><h3>Suggested action</h3><p>${esc(f.suggested_action)}</p></section>
     <section class="detail-section"><h3>Review</h3><form class="review-form" id="review-form">
       <div class="form-row"><select name="status">${["new","in_review","resolved","dismissed"].map(x => `<option ${x === f.status ? "selected" : ""}>${x}</option>`)}</select><select name="disposition"><option value="">No disposition</option>${["current_no_action","update_needed","deprecate","superseded","false_positive","monitor"].map(x => `<option ${x === f.disposition ? "selected" : ""}>${x}</option>`)}</select></div>
       <div class="form-row"><input name="reviewer" placeholder="Reviewer" value="${esc(f.reviewer || "")}"><input name="assignee" placeholder="Assignee" value="${esc(f.assignee || "")}"></div>
       <input name="follow_up_date" placeholder="Follow-up date (YYYY-MM-DD)" value="${esc(f.follow_up_date || "")}">
       <textarea name="note" placeholder="Review note">${esc(f.note || "")}</textarea><button class="button primary" type="submit">Save review</button>
-    </form></section>`;
+    </form></section>
+    <div class="grid detail-metrics"><div class="detail-metric"><strong>${doc.inbound_links.length}</strong><small>Inbound links</small></div><div class="detail-metric"><strong>${doc.outbound_links.length}</strong><small>Outbound links</small></div><div class="detail-metric"><strong>${doc.contributors.length}</strong><small>Contributors</small></div></div>
+    <section class="detail-section"><h3>Activity</h3>${lineChart(doc.activity_history)}</section>
+    <section class="detail-section"><h3>Linked from</h3>${doc.inbound_links.length ? `<ul>${doc.inbound_links.map(x => `<li><button data-doc="${esc(x.src_id)}">${esc(x.title || x.src_id)}</button></li>`).join("")}</ul>` : `<p class="muted">Nothing links here.</p>`}</section>
+    <section class="detail-section"><h3>Links to</h3>${doc.outbound_links.length ? `<ul>${doc.outbound_links.map(x => `<li><button data-doc="${esc(x.dst_id)}">${esc(x.title || x.dst_id)}</button></li>`).join("")}</ul>` : `<p class="muted">No outbound links.</p>`}</section>
+    ${isDemo && alignment.length ? alignmentSection(alignment) : ""}`;
   drawer.showModal();
   document.querySelector("#review-form").onsubmit = async event => {
     event.preventDefault();

@@ -48,7 +48,7 @@ Useful for surfacing "at risk" docs before they cause problems.
 
 ---
 
-## Terminology Disambiguation
+## Terminology Disambiguation *(→ see [docs/ontology-roadmap.md](docs/ontology-roadmap.md))*
 
 Beyond tracking term frequency, actively detect when the same term is used differently across clusters:
 
@@ -104,6 +104,6 @@ Document sharing scope (private → team → org → public) combined with activ
 
 ---
 
-## Organizational Ontology Export
+## Organizational Ontology Export *(→ see [docs/ontology-roadmap.md](docs/ontology-roadmap.md))*
 
 Generate a machine-readable ontology file (e.g., OWL or simple JSON-LD) from the extracted terminology graph. This could feed other tools — search ranking, onboarding bots, compliance checks — that need to understand what terms mean in this org's context.

@@ -45,6 +45,7 @@ from operations import (
 from sources import load_sources
 import indexer
 from indexer import run as run_indexer
+import ontology as _ontology
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT, "web")
@@ -770,6 +771,67 @@ def clusters():
             "sample_titles": known[:5],
         })
     return result
+
+
+@app.get("/ontology/terms")
+def ontology_terms(doc_id: str):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT term, frequency, term_type FROM doc_terms WHERE doc_id = ? ORDER BY frequency DESC",
+        (doc_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.get("/ontology/alignment/{doc_id}")
+def ontology_alignment(doc_id: str):
+    conn = get_conn()
+    titles = title_map(conn)
+    rows = conn.execute(
+        """SELECT src_id, dst_id, alignment_score, shared_terms, divergent_terms
+           FROM doc_alignment WHERE src_id = ? OR dst_id = ?""",
+        (doc_id, doc_id),
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        direction = "outbound" if r["src_id"] == doc_id else "inbound"
+        linked_id = r["dst_id"] if direction == "outbound" else r["src_id"]
+        result.append({
+            "linked_doc_id": linked_id,
+            "linked_doc_title": titles.get(linked_id, linked_id),
+            "direction": direction,
+            "alignment_score": r["alignment_score"],
+            "shared_terms": json.loads(r["shared_terms"] or "[]"),
+            "divergent_terms": json.loads(r["divergent_terms"] or "[]"),
+        })
+    result.sort(key=lambda x: (x["alignment_score"] or 1.0))
+    return result
+
+
+@app.get("/ontology/drift")
+def ontology_drift(threshold: float = 0.4):
+    conn = get_conn()
+    titles = title_map(conn)
+    rows = conn.execute(
+        """SELECT src_id, dst_id, alignment_score, divergent_terms
+           FROM doc_alignment WHERE alignment_score IS NOT NULL AND alignment_score < ?
+           ORDER BY alignment_score ASC""",
+        (threshold,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "src_id": r["src_id"],
+            "src_title": titles.get(r["src_id"], r["src_id"]),
+            "dst_id": r["dst_id"],
+            "dst_title": titles.get(r["dst_id"], r["dst_id"]),
+            "alignment_score": r["alignment_score"],
+            "divergent_terms": json.loads(r["divergent_terms"] or "[]")[:10],
+        }
+        for r in rows
+    ]
 
 
 app.mount("/assets", StaticFiles(directory=WEB_DIR), name="web-assets")

@@ -269,7 +269,8 @@ def generate_brief(conn, days=7, polish=False, now=None, openai_client=None, mod
             WHERE reviewed_at >= ? ORDER BY reviewed_at DESC
         """, (f"{window_start}T00:00:00Z",)).fetchall()
     ]
-    deterministic = _build_brief_sections(findings, recently_reviewed, days)
+    drift_pairs = _load_drift_pairs(conn)
+    deterministic = _build_brief_sections(findings, recently_reviewed, days, drift_pairs)
     polished = None
     used_model = None
     if polish:
@@ -294,7 +295,30 @@ def _claim(text, findings):
     return {"text": text, "evidence_ids": [finding["id"] for finding in findings]}
 
 
-def _build_brief_sections(findings, recently_reviewed, days):
+def _load_drift_pairs(conn):
+    """Return the worst-aligned linked doc pairs, or [] if table doesn't exist yet."""
+    try:
+        max_row = conn.execute("SELECT MAX(alignment_score) AS m FROM doc_alignment").fetchone()
+        if not max_row or not max_row["m"]:
+            return []
+        threshold = max_row["m"] * 0.4
+        rows = conn.execute("""
+            SELECT da.src_id, da.dst_id, da.alignment_score, da.divergent_terms,
+                   s.title AS src_title, d.title AS dst_title,
+                   s.web_url AS src_url, d.web_url AS dst_url
+            FROM doc_alignment da
+            JOIN documents s ON s.id = da.src_id
+            JOIN documents d ON d.id = da.dst_id
+            WHERE da.alignment_score <= ?
+            ORDER BY da.alignment_score ASC
+            LIMIT 3
+        """, (threshold,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None):
     rising = [f for f in findings if f["signal_type"] == "rising"]
     stale_hubs = [f for f in findings if f["signal_type"] == "stale_hub"]
     quiet = [f for f in findings if f["signal_type"] == "went_quiet"]
@@ -305,6 +329,7 @@ def _build_brief_sections(findings, recently_reviewed, days):
         "what_changed": [],
         "follow_ups": [],
         "knowledge_risks": [],
+        "terminology_drift": [],
         "recently_reviewed": [],
     }
     if rising:
@@ -336,6 +361,27 @@ def _build_brief_sections(findings, recently_reviewed, days):
             f"{len(reviewed)} finding{'s were' if len(reviewed) != 1 else ' was'} resolved or "
             f"dismissed in the last {days} days.", reviewed,
         ))
+    if drift_pairs:
+        for pair in drift_pairs[:3]:
+            divergent = json.loads(pair["divergent_terms"])[:4] if isinstance(pair["divergent_terms"], str) else (pair["divergent_terms"] or [])[:4]
+            terms_str = ", ".join(f'"{t}"' for t in divergent) if divergent else "several key terms"
+            sections["terminology_drift"].append({
+                "text": (
+                    f"\"{pair['src_title']}\" uses {terms_str} "
+                    f"which do not appear in \"{pair['dst_title']}\". "
+                    "This may indicate terminology drift between these linked documents."
+                ),
+                "evidence_ids": [],
+                "drift": {
+                    "src_id": pair["src_id"],
+                    "src_title": pair["src_title"],
+                    "src_url": pair.get("src_url"),
+                    "dst_id": pair["dst_id"],
+                    "dst_title": pair["dst_title"],
+                    "dst_url": pair.get("dst_url"),
+                    "divergent_terms": divergent,
+                },
+            })
     return {"sections": sections}
 
 
