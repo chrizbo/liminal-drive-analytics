@@ -16,7 +16,7 @@ Step-by-step instructions to configure Google API access for Liminal Drive Analy
 
 ## Step 2 — Enable the Required APIs
 
-You need to enable three APIs for this project.
+You need to enable five APIs for this project.
 
 1. In the left sidebar, go to **APIs & Services → Library**.
 2. Search for and enable each of the following:
@@ -25,7 +25,9 @@ You need to enable three APIs for this project.
 |---|---|
 | **Google Drive API** | List files, get metadata |
 | **Google Docs API** | Read document content to extract links |
+| **Google Slides API** | Read presentation content to extract links |
 | **Drive Activity API** | Get view, edit, and comment events |
+| **People API** | Resolve activity actors to names when Google permits it |
 
 For each: click the API name → click **Enable**.
 
@@ -114,8 +116,13 @@ python src/indexer.py --shared-drive "https://drive.google.com/drive/folders/SHA
 ```
 
 Each Shared Drive is indexed into a separate local database and appears as a
-named workspace in the dashboard. Expansion stays within the selected Shared
+named workspace in the web app. Expansion stays within the selected Shared
 Drive.
+
+After the workspace has been registered, select it in the web app and use
+**Settings → Index Drive** for future indexing runs. The progress screen reports
+the active phase and current document while indexing continues in the
+background.
 
 ---
 
@@ -128,6 +135,7 @@ The app requests the minimum scopes needed:
 | `drive.readonly` | List files and read metadata |
 | `documents.readonly` | Read document body to extract links |
 | `drive.activity.readonly` | Read view/edit/comment events |
+| `contacts.readonly` | Resolve Drive Activity person IDs when available |
 
 All scopes are read-only. The app never writes to Drive.
 
@@ -148,7 +156,7 @@ If you want to revoke access at any time:
 Personal OAuth is sufficient for testing. For production deployment across an organization:
 
 1. A **Google Workspace Admin** creates a Service Account in the Cloud project.
-2. The admin grants **Domain-Wide Delegation** to the service account, authorizing the same three scopes.
+2. The admin grants **Domain-Wide Delegation** to the service account, authorizing the same read-only scopes.
 3. The indexer uses the service account (no user interaction required) and can access Drive activity across all users in the org.
 4. The consent screen app type changes to **Internal** so only org users can authenticate.
 

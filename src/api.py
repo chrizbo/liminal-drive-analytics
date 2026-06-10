@@ -11,17 +11,26 @@ Or from the src/ directory:
 """
 
 import os
+import json
 import secrets
 import sys
+import threading
+import uuid
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import db
 from db import connect, init
+from demo_data import reset_demo_database
 from graph import build_doc_graph, in_degree_rank, communities
 from analytics import (
     activity_by_doc, stale_activity, title_map,
@@ -33,6 +42,17 @@ from operations import (
     detect_findings, generate_brief, get_brief, get_finding, latest_brief, list_findings,
     refresh_findings, update_review,
 )
+from sources import load_sources
+import indexer
+from indexer import run as run_indexer
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WEB_DIR = os.path.join(ROOT, "web")
+CONFIG_PATH = os.path.join(ROOT, "config.json")
+active_database_path = ContextVar("active_database_path", default=None)
+active_workspace = ContextVar("active_workspace", default=None)
+indexing_jobs = {}
+indexing_jobs_lock = threading.Lock()
 
 app = FastAPI(
     title="Liminal Drive Analytics API",
@@ -52,17 +72,54 @@ app.add_middleware(
 )
 
 
+def available_workspaces():
+    workspaces = [
+        {"id": "demo", "name": "Demo product team", "kind": "demo", "database_path": db.DEMO_DB_PATH},
+        {"id": "live", "name": "Live Drive", "kind": "live", "database_path": db.DB_PATH},
+    ]
+    for source in load_sources():
+        path = source.get("database_path", "")
+        if path and os.path.exists(path):
+            workspaces.append({
+                "id": f"shared:{source['id']}",
+                "name": source.get("name") or source["id"],
+                "kind": "shared",
+                "database_path": path,
+                "indexed_at": source.get("indexed_at"),
+            })
+    return workspaces
+
+
+@app.middleware("http")
+async def select_workspace(request: Request, call_next):
+    workspace_id = request.query_params.get("workspace", "live")
+    workspace = next((item for item in available_workspaces() if item["id"] == workspace_id), None)
+    if not workspace:
+        return FileResponse(os.path.join(WEB_DIR, "index.html"), status_code=404) if request.url.path == "/" else await call_next(request)
+    if workspace["kind"] == "demo" and not os.path.exists(workspace["database_path"]):
+        reset_demo_database(workspace["database_path"])
+    token = active_database_path.set(workspace["database_path"])
+    workspace_token = active_workspace.set(workspace)
+    try:
+        return await call_next(request)
+    finally:
+        active_workspace.reset(workspace_token)
+        active_database_path.reset(token)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def get_conn():
-    conn = connect()
+    conn = connect(active_database_path.get() or db.DB_PATH)
     init(conn)
     return conn
 
 
 def require_write_token(x_admin_token: Optional[str] = Header(default=None)):
     expected = os.environ.get("DRIVE_ANALYTICS_WRITE_TOKEN")
-    if not expected or not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
+    if not expected:
+        return
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
         raise HTTPException(status_code=401, detail="Valid X-Admin-Token required")
 
 
@@ -84,6 +141,160 @@ class BriefGenerateRequest(BaseModel):
     days: int = 7
     polish: bool = False
     model: Optional[str] = None
+
+
+class IndexingStartRequest(BaseModel):
+    days: int = 90
+    expand: bool = True
+
+
+class SettingsUpdate(BaseModel):
+    path_significant_domains: list[str]
+    openai_model: str = "gpt-5.4-mini"
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH) as config_file:
+            return json.load(config_file)
+    except Exception:
+        return {"path_significant_domains": [], "openai_model": "gpt-5.4-mini"}
+
+
+@app.get("/workspaces")
+def workspaces():
+    return [
+        {key: value for key, value in workspace.items() if key != "database_path"}
+        for workspace in available_workspaces()
+    ]
+
+
+@app.get("/configuration")
+def configuration():
+    config = load_config()
+    return {
+        "write_token_required": bool(os.environ.get("DRIVE_ANALYTICS_WRITE_TOKEN")),
+        "path_significant_domains": config.get("path_significant_domains", []),
+        "openai_model": config.get("openai_model", "gpt-5.4-mini"),
+    }
+
+
+@app.patch("/configuration", dependencies=[Depends(require_write_token)])
+def configuration_update(body: SettingsUpdate):
+    domains = sorted({
+        domain.strip().lower()
+        for domain in body.path_significant_domains
+        if domain.strip()
+    })
+    model = body.openai_model.strip() or "gpt-5.4-mini"
+    config = load_config()
+    config["path_significant_domains"] = domains
+    config["openai_model"] = model
+    with open(CONFIG_PATH, "w") as config_file:
+        json.dump(config, config_file, indent=2)
+    indexer.PATH_SIGNIFICANT = set(domains)
+    return {
+        "write_token_required": bool(os.environ.get("DRIVE_ANALYTICS_WRITE_TOKEN")),
+        "path_significant_domains": domains,
+        "openai_model": model,
+    }
+
+
+@app.get("/")
+def web_app():
+    return FileResponse(os.path.join(WEB_DIR, "index.html"))
+
+
+def _public_job(job):
+    return {key: value for key, value in job.items() if key not in {"thread"}}
+
+
+def _update_indexing_job(job_id, values):
+    with indexing_jobs_lock:
+        job = indexing_jobs.get(job_id)
+        if not job:
+            return
+        job.update(values)
+        job["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _run_indexing_job(job_id, workspace, days, expand):
+    try:
+        def progress(event):
+            _update_indexing_job(job_id, {
+                "status": "running",
+                "phase": event.get("phase"),
+                "message": event.get("message"),
+                "current": event.get("current"),
+                "total": event.get("total"),
+                "document_title": event.get("document_title"),
+            })
+
+        shared_drive = workspace["id"].split(":", 1)[1] if workspace["kind"] == "shared" else None
+        result = run_indexer(days, False, expand, shared_drive, progress)
+        _update_indexing_job(job_id, {
+            "status": "completed", "phase": "complete", "progress": 100,
+            "message": f"{workspace['name']} is up to date", "result": result,
+            "completed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+    except Exception as exc:
+        _update_indexing_job(job_id, {
+            "status": "failed", "phase": "failed", "message": str(exc),
+            "error": str(exc), "completed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+
+@app.get("/indexing/jobs/current")
+def indexing_current():
+    workspace = active_workspace.get()
+    with indexing_jobs_lock:
+        jobs = [job for job in indexing_jobs.values() if job["workspace_id"] == workspace["id"]]
+        if not jobs:
+            return {"status": "idle", "workspace_id": workspace["id"]}
+        jobs.sort(key=lambda job: job["created_at"], reverse=True)
+        return _public_job(jobs[0])
+
+
+@app.get("/indexing/jobs/{job_id}")
+def indexing_detail(job_id: str):
+    with indexing_jobs_lock:
+        job = indexing_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Indexing job not found")
+        return _public_job(job)
+
+
+@app.post("/indexing/jobs", dependencies=[Depends(require_write_token)])
+def indexing_start(body: IndexingStartRequest):
+    workspace = active_workspace.get()
+    if workspace["kind"] == "demo":
+        raise HTTPException(status_code=400, detail="Demo data cannot be indexed from Google Drive")
+    if body.days < 1 or body.days > 3650:
+        raise HTTPException(status_code=400, detail="days must be between 1 and 3650")
+    with indexing_jobs_lock:
+        existing = next((
+            job for job in indexing_jobs.values()
+            if job["workspace_id"] == workspace["id"] and job["status"] in {"queued", "running"}
+        ), None)
+        if existing:
+            return _public_job(existing)
+        job_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        job = {
+            "id": job_id, "workspace_id": workspace["id"], "workspace_name": workspace["name"],
+            "status": "queued", "phase": "queued", "message": "Waiting to start",
+            "current": None, "total": None, "days": body.days, "expand": body.expand,
+            "created_at": now, "updated_at": now,
+        }
+        indexing_jobs[job_id] = job
+    thread = threading.Thread(
+        target=_run_indexing_job, args=(job_id, dict(workspace), body.days, body.expand),
+        name=f"drive-index-{job_id[:8]}", daemon=True,
+    )
+    with indexing_jobs_lock:
+        indexing_jobs[job_id]["thread"] = thread
+    thread.start()
+    return _public_job(job)
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
@@ -354,6 +565,74 @@ def brief_latest():
     return result
 
 
+@app.get("/briefs/recommendations")
+def brief_recommendations(person_id: Optional[str] = None, limit: int = 8):
+    """Rising documents worth reading, personalized when attributed view data exists."""
+    conn = get_conn()
+    titles = title_map(conn)
+    docs = {
+        row["id"]: {
+            "title": row["title"],
+            "url": doc_url(row["id"], row["web_url"] or "", row["mime_type"] or ""),
+        }
+        for row in conn.execute("SELECT id, title, web_url, mime_type FROM documents")
+    }
+    activity = activity_by_doc(conn)
+    rising = rising_docs(activity, titles, top_n=500)
+    attributed_view_count = conn.execute(
+        "SELECT COUNT(*) FROM person_activity WHERE action='view'"
+    ).fetchone()[0]
+    viewed_ids = set()
+    person_view_count = 0
+    if person_id:
+        viewed_rows = conn.execute("""
+                SELECT document_id, count FROM person_activity
+                WHERE person_id=? AND action='view'
+            """, (person_id,)).fetchall()
+        viewed_ids = {row["document_id"] for row in viewed_rows}
+        person_view_count = sum(row["count"] for row in viewed_rows)
+    recommendations = []
+    for document_id, gain, recent, prior in rising:
+        if person_id and attributed_view_count and document_id in viewed_ids:
+            continue
+        document = docs.get(document_id)
+        if not document:
+            continue
+        recommendations.append({
+            "id": document_id,
+            "title": document["title"],
+            "url": document["url"],
+            "gain": gain,
+            "recent_activity": recent,
+            "prior_activity": prior,
+            "viewed_by_person": document_id in viewed_ids,
+        })
+        if len(recommendations) >= limit:
+            break
+    conn.close()
+    return {
+        "person_id": person_id,
+        "personalized": bool(person_id and person_view_count),
+        "attributed_view_events_available": bool(attributed_view_count),
+        "recommendations": recommendations,
+    }
+
+
+@app.get("/people")
+def people_list():
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT p.id, p.display_name, p.email,
+               SUM(CASE WHEN pa.action='view' THEN pa.count ELSE 0 END) as attributed_views
+        FROM persons p
+        LEFT JOIN person_activity pa ON pa.person_id = p.id
+        GROUP BY p.id
+        ORDER BY COALESCE(NULLIF(p.display_name,''), NULLIF(p.email,''), p.id)
+    """).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 @app.get("/briefs/{brief_id}")
 def brief_detail(brief_id: str):
     conn = get_conn()
@@ -368,7 +647,8 @@ def brief_detail(brief_id: str):
 def brief_generate(body: BriefGenerateRequest):
     conn = get_conn()
     refresh_findings(conn, recent_days=body.days, prior_days=body.days)
-    result = generate_brief(conn, days=body.days, polish=body.polish, model=body.model)
+    model = body.model or load_config().get("openai_model", "gpt-5.4-mini")
+    result = generate_brief(conn, days=body.days, polish=body.polish, model=model)
     conn.close()
     return result
 
@@ -490,3 +770,6 @@ def clusters():
             "sample_titles": known[:5],
         })
     return result
+
+
+app.mount("/assets", StaticFiles(directory=WEB_DIR), name="web-assets")

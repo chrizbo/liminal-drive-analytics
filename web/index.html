@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8fafd">
+  <title>Liminal Drive Analytics</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview">
+      <span class="brand-mark">L</span>
+      <span><strong>Liminal</strong><small>Drive Analytics</small></span>
+    </a>
+    <div class="workspace-control">
+      <label for="workspace">Workspace</label>
+      <select id="workspace"></select>
+    </div>
+    <nav id="nav">
+      <a href="#overview" data-route="overview">Overview</a>
+      <a href="#review" data-route="review">Ops review <span id="review-count" class="nav-count"></span></a>
+      <a href="#graph" data-route="graph">Document graph</a>
+      <a href="#documents" data-route="documents">Documents</a>
+      <a href="#external" data-route="external">External links</a>
+      <a href="#settings" data-route="settings">Settings</a>
+    </nav>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow" id="route-eyebrow">Knowledge operations</p>
+        <h1 id="route-title">Overview</h1>
+      </div>
+      <div class="top-actions">
+        <label class="search-box">
+          <span>Search</span>
+          <input id="global-search" type="search" placeholder="Find a document">
+        </label>
+        <button class="icon-button" id="refresh-button" title="Refresh data">↻</button>
+      </div>
+    </header>
+    <section id="app" aria-live="polite"></section>
+  </main>
+
+  <dialog id="drawer">
+    <button class="drawer-close" data-close-drawer aria-label="Close">×</button>
+    <div id="drawer-content"></div>
+  </dialog>
+  <div id="toast"></div>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

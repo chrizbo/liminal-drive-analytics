@@ -6,13 +6,17 @@
 
 ## Screenshots
 
-| Overview | Needs Attention |
+| Overview | Ops Review |
 |---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Needs Attention](docs/screenshots/needs-attention.png) |
+| ![Overview](docs/screenshots/overview.png) | ![Ops Review](docs/screenshots/needs-attention.png) |
 
-| Document Graph | Doc Detail |
+| Document Graph | Settings |
 |---|---|
-| ![Graph](docs/screenshots/graph.png) | ![Doc Detail](docs/screenshots/doc-detail.png) |
+| ![Graph](docs/screenshots/graph.png) | ![Settings](docs/screenshots/settings.png) |
+
+| Document Detail |
+|---|
+| ![Doc Detail](docs/screenshots/doc-detail.png) |
 
 ## What It Does
 
@@ -28,11 +32,13 @@ Liminal Drive Analytics builds a live graph of your organization's documents and
 
 **External link map** — every link out of Google Docs to external systems (Notion, Jira, GitHub, Confluence, etc.) becomes a typed node in the graph. Surfaces what knowledge lives outside Drive and in what proportions.
 
-**Ontology tracking** — common terminology extracted from document content over time. Tracks which terms are rising, declining, or inconsistently defined across the org.
+**Leader Brief** — an actionable summary built from operational findings. Use **Viewing as** to see rising documents that person may not have viewed, then open the source documents directly. When Drive does not provide attributable viewer activity, the brief clearly falls back to broadly useful recommendations.
 
-**Leader Brief** — a persisted weekly narrative built from operational findings. Every claim expands into the documents and metrics that support it. An optional OpenAI pass can polish the prose without changing evidence references.
+**Ops Review** — a durable review queue for stale hubs, rising documents, and documents that went quiet. Three urgency levels replace opaque numeric scores, and every item links back to its source document. Reviewers can assign, annotate, resolve, dismiss, and schedule follow-up without modifying source documents.
 
-**Ops Review** — a durable review queue for stale hubs, rising documents, and documents that went quiet. Reviewers can assign, annotate, resolve, dismiss, and schedule follow-up without modifying source documents.
+**Background indexing** — request a fresh index from **Settings** and follow its active phase, current document, and progress without leaving the web app.
+
+**Local settings** — configure the OpenAI model and path-significant external-link domains from the web app. Settings are persisted to `config.json`.
 
 ### Who It's For
 
@@ -50,12 +56,20 @@ drive-analytics/
 ├── SPEC.md                 # Technical specification and data model
 ├── FUTURE_IDEAS.md         # Tabled ideas for later consideration
 ├── docs/
-│   └── google-setup.md    # How to configure Google APIs and OAuth
+│   ├── google-setup.md     # How to configure Google APIs and OAuth
+│   └── screenshots/        # Current web app screenshots
 ├── src/
-│   ├── auth.py            # OAuth flow
-│   ├── indexer.py         # Drive/Docs API crawling and link extraction
-│   ├── graph.py           # Graph construction and analysis
-│   └── analytics.py       # Rising/stale/hub detection
+│   ├── api.py              # FastAPI app and web/API routes
+│   ├── auth.py             # OAuth flow and Google service clients
+│   ├── indexer.py          # Drive crawling, activity, and link extraction
+│   ├── graph.py            # Graph construction and analysis
+│   ├── analytics.py        # Rising/stale/hub detection
+│   └── operations.py       # Leader Brief and Ops Review state
+├── web/
+│   ├── index.html          # Local web app shell
+│   ├── app.js              # Views, drawers, and interactions
+│   └── styles.css          # Google Drive-inspired interface
+├── tests/                  # API, indexing, graph, and analytics tests
 └── data/                  # Local graph storage (gitignored)
 ```
 
@@ -100,15 +114,17 @@ root URL, ID, or any folder URL inside it:
 python3 src/indexer.py --shared-drive "https://drive.google.com/drive/folders/0AP6VPalWOTU-Uk9PVA" --days 365 --expand
 ```
 
-Indexed Shared Drives appear by name in the dashboard Workspace selector. Their
+Indexed Shared Drives appear by name in the web app's Workspace selector. Their
 documents and operational findings remain isolated from personal Drive data.
 
-### 6. Launch the dashboard
+### 6. Launch the web app
 ```bash
-streamlit run src/dashboard.py
+uvicorn src.api:app --reload
 ```
 
-The dashboard opens in **Demo product team** mode by default. This creates an isolated fictional Northstar product-team workspace showing an Orbit Mobile launch, realistic document relationships, activity signals, operational findings, and a ready-made Leader Brief. Switch to **Live Drive** in the sidebar to use indexed Drive data.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The locally hosted web app opens in **Demo product team** mode by default. It includes the leader brief, analytics, urgency-based ops review, interactive document graph, document detail, external-link map, and settings. Switch to **Live Drive** or an indexed Shared Drive from the workspace selector.
+
+Open **Settings** and use **Index Drive** to request a fresh index for the selected Live or Shared Drive workspace. The progress screen reports the active phase, current document, and completion while the background job runs locally.
 
 Reset or prepare the demo dataset from the command line:
 
@@ -121,17 +137,13 @@ python3 src/demo_data.py
 python3 -m pytest
 ```
 
-### Running the API
+Interactive API documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) while the app is running.
 
-```bash
-uvicorn src.api:app --reload
-```
-
-Operational writes require the configured token in the `X-Admin-Token` header. Read endpoints remain unauthenticated for local use.
+When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it in the `X-Admin-Token` header. Without a configured token, writes remain available for local use; set one before exposing the app beyond your machine.
 
 ## Hosting
 
-- **Local** (default) — runs as a Python script on your machine. Good for prototyping and personal Drive testing.
-- **Google Cloud** (production path) — Cloud Run for the indexer and API, Cloud Scheduler for periodic scans, Firestore or BigQuery for graph storage. Designed to migrate cleanly from local.
+- **Local** (default) — FastAPI serves the web app, API, and background indexer on your machine. Good for prototyping and personal Drive testing.
+- **Google Cloud** (production path) — Cloud Run for the web app, API, and indexer; Cloud Scheduler for periodic scans; Firestore or BigQuery for graph storage. Designed to migrate cleanly from local.
 
 See [SPEC.md](SPEC.md) for the full technical plan.

@@ -24,8 +24,6 @@ def _handle_interrupt(sig, frame):
     print("\n\nInterrupted. Progress saved to data/graph.db.")
     sys.exit(0)
 
-signal.signal(signal.SIGINT, _handle_interrupt)
-
 DRIVE_FILE_RE = re.compile(r"https://(?:docs|drive|slides|sheets)\.google\.com/.+?/d/([a-zA-Z0-9_-]+)")
 
 def truncate(s, n=40):
@@ -410,7 +408,7 @@ def drive_list_args(query, page_token=None, source=None):
     return args
 
 
-def resolve_people(people_svc, conn, verbose=False):
+def resolve_people(people_svc, conn, verbose=False, progress=None):
     """Resolve people/XXXXX resource names → display name + email using People API.
     Only fetches records where email is still blank. Batches in groups of 50."""
     unresolved = [
@@ -420,9 +418,16 @@ def resolve_people(people_svc, conn, verbose=False):
     ]
     if not unresolved:
         print("All persons already resolved.")
+        if progress:
+            progress({"phase": "people", "message": "All people already resolved", "current": 0, "total": 0})
         return
 
     print(f"Resolving {len(unresolved)} person IDs via People API...")
+    if progress:
+        progress({
+            "phase": "people", "message": f"Resolving {len(unresolved)} people",
+            "current": 0, "total": len(unresolved),
+        })
     resolved = 0
     batch_size = 200
     batches = range(0, len(unresolved), batch_size)
@@ -453,14 +458,27 @@ def resolve_people(people_svc, conn, verbose=False):
                     if verbose:
                         tqdm.write(f"  {resource_name} → {display_name} <{email}>")
                     resolved += 1
+            if progress:
+                progress({
+                    "phase": "people", "message": f"Resolved {resolved} of {len(unresolved)} people",
+                    "current": min(i + len(batch), len(unresolved)), "total": len(unresolved),
+                })
 
     conn.commit()
     print(f"Resolved {resolved} of {len(unresolved)} person IDs.")
 
 
-def run(days, verbose, expand=False, shared_drive=None):
+def run(days, verbose, expand=False, shared_drive=None, progress=None):
+    def report(phase, message, current=None, total=None, **extra):
+        if progress:
+            progress({
+                "phase": phase, "message": message, "current": current, "total": total, **extra,
+            })
+
+    report("authenticating", "Connecting to Google Drive")
     creds = get_credentials()
     drive_svc, docs_svc, slides_svc, activity_svc, people_svc = build_services(creds)
+    report("authenticating", "Connected to Google Drive")
     source = resolve_shared_drive(drive_svc, shared_drive) if shared_drive else None
     database_path = shared_drive_db_path(source["id"]) if source else None
     conn = connect(database_path)
@@ -477,6 +495,7 @@ def run(days, verbose, expand=False, shared_drive=None):
 
     source_label = f"Shared Drive '{source['name']}'" if source else "Drive"
     print(f"Fetching files from {source_label} modified in the last {days} days...")
+    report("fetching", f"Fetching files from {source_label}")
     files = []
     page_token = None
     while True:
@@ -484,14 +503,24 @@ def run(days, verbose, expand=False, shared_drive=None):
         resp = drive_svc.files().list(**list_args).execute()
         files.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
+        report("fetching", f"Found {len(files)} files so far", current=len(files))
         if not page_token:
             break
 
     print(f"Found {len(files)} files. Indexing...")
+    report("indexing", f"Indexing {len(files)} files", current=0, total=len(files))
     with tqdm(files, unit="doc", dynamic_ncols=True) as bar:
-        for f in bar:
+        for index, f in enumerate(bar, 1):
             bar.set_postfix_str(truncate(f.get("name", "")).ljust(40), refresh=True)
+            report(
+                "indexing", f"Indexing {f.get('name', 'Untitled')}",
+                current=index - 1, total=len(files), document_title=f.get("name", ""),
+            )
             index_file(f, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
+            report(
+                "indexing", f"Indexed {f.get('name', 'Untitled')}",
+                current=index, total=len(files), document_title=f.get("name", ""),
+            )
 
     if expand:
         # Follow doc→doc links to index referenced docs not in the date window
@@ -504,22 +533,32 @@ def run(days, verbose, expand=False, shared_drive=None):
         ]
         if unindexed:
             print(f"\nExpanding: found {len(unindexed)} linked-but-unindexed docs. Fetching...")
+            report("expanding", f"Expanding {len(unindexed)} linked documents", current=0, total=len(unindexed))
             with tqdm(unindexed, desc="Expanding", unit="doc", dynamic_ncols=True) as bar:
-                for file_id in bar:
+                for index, file_id in enumerate(bar, 1):
                     meta = fetch_file_meta(drive_svc, file_id)
                     if not meta:
+                        report("expanding", "Skipped unavailable linked document", current=index, total=len(unindexed))
                         continue
                     if source and meta.get("driveId") != source["id"]:
+                        report("expanding", "Skipped linked document outside workspace", current=index, total=len(unindexed))
                         continue
                     mime = meta.get("mimeType", "")
                     if mime not in ("application/vnd.google-apps.document", "application/vnd.google-apps.presentation"):
+                        report("expanding", "Skipped unsupported linked document", current=index, total=len(unindexed))
                         continue
                     bar.set_postfix_str(truncate(meta.get("name", "")), refresh=True)
                     index_file(meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
+                    report(
+                        "expanding", f"Indexed linked document {meta.get('name', 'Untitled')}",
+                        current=index, total=len(unindexed), document_title=meta.get("name", ""),
+                    )
         else:
             print("\nNo unindexed linked docs found.")
+            report("expanding", "No linked documents need indexing", current=0, total=0)
 
-    resolve_people(people_svc, conn, verbose)
+    resolve_people(people_svc, conn, verbose, progress)
+    report("findings", "Refreshing operational findings")
     result = refresh_findings(conn)
     print(
         f"Operational findings: {result['created']} created, "
@@ -529,6 +568,16 @@ def run(days, verbose, expand=False, shared_drive=None):
     if source:
         register_shared_drive(source["id"], source["name"], database_path)
     print(f"\nDone. {database_path or 'data/graph.db'} is up to date.")
+    report(
+        "complete", f"{source_label} is up to date",
+        findings=result, database_path=database_path,
+    )
+    return {
+        "source": source_label,
+        "database_path": database_path,
+        "files_found": len(files),
+        "findings": result,
+    }
 
 
 def reclassify(verbose=False):
@@ -551,6 +600,7 @@ def reclassify(verbose=False):
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, _handle_interrupt)
     parser = argparse.ArgumentParser(description="Index Google Drive Docs and Slides")
     parser.add_argument("--days", type=int, default=90, help="How many days back to index (default: 90)")
     parser.add_argument("--expand", action="store_true", help="Follow links to index referenced docs outside the date window")

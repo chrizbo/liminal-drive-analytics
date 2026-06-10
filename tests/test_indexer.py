@@ -2,6 +2,8 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import db
+import indexer
 from indexer import classify_domain, normalize_url, get_apex_domain, truncate
 
 
@@ -121,3 +123,62 @@ def test_truncate_custom_length():
     result = truncate("hello world", n=8)
     assert len(result) == 8
     assert result == "hello..."
+
+
+class FakeExecute:
+    def __init__(self, result):
+        self.result = result
+
+    def execute(self):
+        return self.result
+
+
+class FakeFiles:
+    def list(self, **kwargs):
+        return FakeExecute({"files": [{
+            "id": "doc-1", "name": "Example Doc",
+            "mimeType": "application/vnd.google-apps.document",
+            "createdTime": "", "modifiedTime": "", "owners": [], "webViewLink": "",
+        }]})
+
+
+class FakeDrive:
+    def files(self):
+        return FakeFiles()
+
+
+class FakeDocuments:
+    def get(self, documentId):
+        return FakeExecute({"body": {}})
+
+
+class FakeDocs:
+    def documents(self):
+        return FakeDocuments()
+
+
+class FakeActivityQuery:
+    def query(self, body):
+        return FakeExecute({"activities": []})
+
+
+class FakeActivity:
+    def activity(self):
+        return FakeActivityQuery()
+
+
+def test_run_reports_structured_progress(monkeypatch, tmp_path):
+    database_path = str(tmp_path / "progress.db")
+    monkeypatch.setattr(indexer, "get_credentials", lambda: object())
+    monkeypatch.setattr(
+        indexer, "build_services",
+        lambda credentials: (FakeDrive(), FakeDocs(), object(), FakeActivity(), object()),
+    )
+    monkeypatch.setattr(indexer, "connect", lambda path=None: db.connect(database_path))
+    events = []
+
+    result = indexer.run(30, False, expand=False, progress=events.append)
+
+    assert result["files_found"] == 1
+    assert any(event["phase"] == "indexing" and event["total"] == 1 for event in events)
+    assert events[-1]["phase"] == "complete"

@@ -178,7 +178,7 @@ Designed for clean lift-and-shift:
 | Python script | Cloud Run job |
 | Cron / manual | Cloud Scheduler |
 | OAuth desktop flow | Service Account + Domain-Wide Delegation (Workspace) |
-| Terminal output | Simple dashboard (Streamlit on Cloud Run, or Looker Studio over BigQuery) |
+| FastAPI-hosted local web app | FastAPI on Cloud Run, or Looker Studio over BigQuery |
 
 For personal Drive testing, OAuth desktop flow is sufficient. For org-wide deployment, a Workspace Admin grants Domain-Wide Delegation to a service account so the indexer can access all users' Drive activity.
 
@@ -191,6 +191,7 @@ For personal Drive testing, OAuth desktop flow is sufficient. For org-wide deplo
 | `https://www.googleapis.com/auth/drive.readonly` | List files and metadata |
 | `https://www.googleapis.com/auth/documents.readonly` | Read document content |
 | `https://www.googleapis.com/auth/drive.activity.readonly` | View/edit/comment activity |
+| `https://www.googleapis.com/auth/contacts.readonly` | Resolve Drive Activity person IDs when available |
 
 ---
 
