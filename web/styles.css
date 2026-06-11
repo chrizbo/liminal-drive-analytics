@@ -151,7 +151,7 @@ td button { border: 0; color: var(--ink); background: transparent; text-align: l
 .line-chart .area { fill: rgba(66,133,244,.1); stroke: none; }
 
 .graph-wrap { position: relative; }
-#graph-canvas { display: block; width: 100%; min-height: 620px; border: 1px solid var(--line); border-radius: 13px; background: #f8fafd; }
+#graph-canvas { display: block; width: 100%; min-height: 700px; border: 1px solid var(--line); border-radius: 13px; background: #f8fafd; }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 0; color: var(--muted); font-size: 11px; }
 .legend-dot { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; }
 .finding-header-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0 16px; }

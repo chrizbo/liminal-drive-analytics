@@ -302,12 +302,33 @@ function buildAlignMap(alignmentData) {
   return map;
 }
 
-const graphColors = { rising: "#34a853", stale_hub: "#ea4335", hub: "#fbbc04", stale: "#8ab4f8", normal: "#4285f4" };
+const graphColors = { rising: "#34a853", stale_hub: "#e8710a", hub: "#e8710a", stale: "#5b8dee", normal: "#1a73e8" };
+const graphBg = { rising: "#e6f4ea", stale_hub: "#fce8d8", hub: "#fce8d8", stale: "#e8eeff", normal: "#e8f0fe" };
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function ringRadius(count, nodeW, gap) {
+  return count < 2 ? 0 : (count * (nodeW + gap)) / (2 * Math.PI);
+}
+
 function drawGraph(data, minInbound = 0, search = "", showAlignment = false, alignMap = new Map()) {
   const canvas = document.querySelector("#graph-canvas");
-  const width = canvas.clientWidth; const height = 620; const scale = devicePixelRatio || 1;
-  canvas.width = width * scale; canvas.height = height * scale;
-  const ctx = canvas.getContext("2d"); ctx.scale(scale, scale);
+  const width = canvas.clientWidth;
+  const nodeW = 160, nodeH = 38, nodeR = 19, gap = 28;
+  const scale = devicePixelRatio || 1;
+
   const matches = search.toLowerCase();
   let nodes = data.nodes.filter(n => n.inbound_links >= minInbound && (!matches || n.title.toLowerCase().includes(matches)));
   if (matches && nodes.length) {
@@ -316,26 +337,89 @@ function drawGraph(data, minInbound = 0, search = "", showAlignment = false, ali
     nodes = data.nodes.filter(n => ids.has(n.id));
   }
   const ids = new Set(nodes.map(n => n.id)); const edges = data.edges.filter(e => ids.has(e.source) && ids.has(e.target));
+
   const byId = new Map();
-  nodes.forEach((node, i) => {
-    const angle = i / Math.max(nodes.length, 1) * Math.PI * 2;
-    const ring = 120 + (i % 3) * 75;
-    byId.set(node.id, { ...node, x: width / 2 + Math.cos(angle) * Math.min(ring, width * .38), y: height / 2 + Math.sin(angle) * ring, r: 6 + Math.min(node.inbound_links, 8) });
-  });
-  ctx.globalAlpha = .72;
+  const focusNode = nodes.find(n => matches && n.title.toLowerCase().includes(matches));
+  let height, cx, cy;
+
+  if (focusNode) {
+    const satellites = nodes.filter(n => n !== focusNode);
+    const r = Math.max(ringRadius(satellites.length, nodeW, gap), 200);
+    height = Math.max(r * 2 + nodeH + 60, 500);
+    cx = width / 2; cy = height / 2;
+    byId.set(focusNode.id, { ...focusNode, x: cx, y: cy, w: nodeW + 20, h: nodeH + 4, r: nodeR });
+    satellites.forEach((node, i) => {
+      const angle = (i / Math.max(satellites.length, 1)) * Math.PI * 2 - Math.PI / 2;
+      byId.set(node.id, { ...node, x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r, w: nodeW, h: nodeH, r: nodeR });
+    });
+  } else {
+    const count = nodes.length;
+    const maxR = width / 2 - nodeW / 2 - 20;
+    const outerR = Math.min(Math.max(ringRadius(count, nodeW, gap), 180), maxR);
+    const innerR = Math.max(outerR * 0.28, nodeH + 20);
+    const maxLinks = Math.max(...nodes.map(n => n.inbound_links), 1);
+    const minLinks = Math.min(...nodes.map(n => n.inbound_links), 0);
+    height = Math.max(outerR * 2 + nodeH + 60, 500);
+    cx = width / 2; cy = height / 2;
+    // Use golden-angle steps so similar-connectivity nodes spread around the circle
+    const goldenStep = Math.round(count * 0.618033988);
+    const angleFor = i => ((i * goldenStep) % count) / count * Math.PI * 2 - Math.PI / 2;
+    nodes.forEach((node, i) => {
+      const t = maxLinks === minLinks ? 0 : (node.inbound_links - minLinks) / (maxLinks - minLinks);
+      const r = innerR + (1 - t) * (outerR - innerR);
+      byId.set(node.id, { ...node, x: cx + Math.cos(angleFor(i)) * r, y: cy + Math.sin(angleFor(i)) * r, w: nodeW, h: nodeH, r: nodeR });
+    });
+  }
+
+  canvas.width = width * scale; canvas.height = height * scale;
+  const ctx = canvas.getContext("2d"); ctx.scale(scale, scale);
+  ctx.clearRect(0, 0, width, height);
+
+  // Draw dashed edges
+  ctx.setLineDash([5, 5]);
   edges.forEach(e => {
     const a = byId.get(e.source), b = byId.get(e.target);
     if (!a || !b) return;
     const alignColor = showAlignment ? (alignMap.get(`${e.source}|${e.target}`) || alignMap.get(`${e.target}|${e.source}`) || "#c4c7c5") : "#c4c7c5";
     ctx.strokeStyle = alignColor;
-    ctx.lineWidth = showAlignment && alignColor !== "#c4c7c5" ? 2 : 1;
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.lineWidth = showAlignment && alignColor !== "#c4c7c5" ? 2 : 1.5;
+    const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.15;
+    const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.15;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo(mx, my, b.x, b.y);
+    ctx.stroke();
   });
-  ctx.globalAlpha = 1; ctx.lineWidth = 1;
-  byId.forEach(n => { ctx.beginPath(); ctx.fillStyle = graphColors[n.status] || graphColors.normal; ctx.arc(n.x,n.y,n.r,0,Math.PI*2); ctx.fill(); if (n.inbound_links > 1 || matches) { ctx.fillStyle="#3c4043"; ctx.font="11px Arial, sans-serif"; ctx.fillText(n.title.slice(0,28),n.x+n.r+5,n.y+4); } });
+  ctx.setLineDash([]);
+
+  // Draw pill nodes
+  ctx.font = "bold 12px -apple-system, Arial, sans-serif";
+  byId.forEach(n => {
+    const color = graphColors[n.status] || graphColors.normal;
+    const bg = graphBg[n.status] || graphBg.normal;
+    const hw = n.w / 2, hh = n.h / 2;
+    // Fill
+    roundRect(ctx, n.x - hw, n.y - hh, n.w, n.h, n.r);
+    ctx.fillStyle = bg;
+    ctx.fill();
+    // Border
+    roundRect(ctx, n.x - hw, n.y - hh, n.w, n.h, n.r);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Label
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const label = n.title.length > 20 ? n.title.slice(0, 19) + "…" : n.title;
+    ctx.fillText(label, n.x, n.y);
+  });
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
   canvas.onclick = event => {
-    const box = canvas.getBoundingClientRect(); const x = event.clientX - box.left, y = event.clientY - box.top;
-    const hit = [...byId.values()].find(n => Math.hypot(n.x-x,n.y-y) < n.r+5);
+    const box = canvas.getBoundingClientRect(); const mx = event.clientX - box.left, my = event.clientY - box.top;
+    const hit = [...byId.values()].find(n => mx >= n.x - n.w/2 && mx <= n.x + n.w/2 && my >= n.y - n.h/2 && my <= n.y + n.h/2);
     if (hit) openDocument(hit.id);
   };
 }
