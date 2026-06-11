@@ -15,12 +15,22 @@ const drawer = document.querySelector("#drawer");
 const drawerContent = document.querySelector("#drawer-content");
 const titles = {
   overview: ["Knowledge operations", "Overview"],
-  review: ["Persistent signals", "Ops review"],
+  review: ["Persistent signals", "Doc audit"],
   graph: ["Connected knowledge", "Document graph"],
   documents: ["Indexed corpus", "Documents"],
   external: ["Knowledge beyond Drive", "External links"],
   settings: ["Workspace administration", "Settings"],
 };
+
+const SIGNAL_DISPLAY_NAMES = {
+  stale_hub: "Stale hub",
+  rising: "Rising doc",
+  went_quiet: "Went quiet",
+  terminology_drift: "Terminology drift",
+  duplicate_candidate: "Possible duplicate",
+  orphaned_meeting_doc: "Orphaned meeting note",
+};
+function signalLabel(type) { return SIGNAL_DISPLAY_NAMES[type] || type; }
 
 function esc(value = "") {
   return String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -106,88 +116,75 @@ function dataRow(doc, meta, right) {
   return `<div class="data-row"><div>${docButton(doc)}<small>${esc(meta)}</small></div><div>${right}</div></div>`;
 }
 function renderBrief(brief, findings, recommendations, people) {
-  if (!brief) return `<article class="card brief"><div class="card-header"><div><h2>Leader brief</h2><p>No brief has been generated yet.</p></div><button class="button primary small" data-generate-brief>Generate brief</button></div></article>`;
+  if (!brief) return `<article class="card brief"><div class="card-header"><div><h2>Team digest</h2><p>No digest has been generated yet.</p></div><button class="button primary small" data-generate-brief>Generate digest</button></div></article>`;
   const content = brief.polished || brief.deterministic;
   const findingsById = new Map(findings.map(finding => [finding.id, finding]));
-  const labels = { what_changed: "What changed", follow_ups: "Decisions and follow-ups", knowledge_risks: "Knowledge risks", terminology_drift: "Terminology drift", duplicate_candidates: "Possible duplicates", orphaned_meetings: "Unreachable meeting docs", recently_reviewed: "Recently reviewed" };
-  const sections = Object.entries(content.sections || {}).filter(([, claims]) => claims.length).map(([key, claims]) =>
-    `<section class="brief-section"><strong>${labels[key] || key}</strong>${claims.map(c => {
-      if (c.drift) {
-        return `<p>${esc(c.text)}</p><div class="brief-links">
-          <button class="brief-doc-btn" data-doc="${esc(c.drift.src_id)}">${esc(c.drift.src_title)}</button>${c.drift.src_url ? `<a class="brief-doc-ext" href="${esc(c.drift.src_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}
-          <button class="brief-doc-btn" data-doc="${esc(c.drift.dst_id)}">${esc(c.drift.dst_title)}</button>${c.drift.dst_url ? `<a class="brief-doc-ext" href="${esc(c.drift.dst_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}
-        </div>`;
-      }
-      if (c.duplicate) {
-        return `<p>${esc(c.text)}</p><div class="brief-links">
-          <button class="brief-doc-btn" data-doc="${esc(c.duplicate.doc_a_id)}">${esc(c.duplicate.doc_a_title)}</button>
-          <button class="brief-doc-btn" data-doc="${esc(c.duplicate.doc_b_id)}">${esc(c.duplicate.doc_b_title)}</button>
-        </div>`;
-      }
-      if (c.docs) {
-        return `<p>${esc(c.text)}</p><div class="brief-links">${c.docs.slice(0, 4).map(d =>
-          `<button class="brief-doc-btn" data-doc="${esc(d.id)}">${esc(d.title)}</button>`
-        ).join("")}</div>`;
-      }
-      const evidence = c.evidence_ids.map(id => findingsById.get(id)).filter(Boolean);
-      return `<p>${esc(c.text)}</p>${evidence.length ? `<div class="brief-links">${evidence.slice(0, 6).map(f => `<button class="brief-doc-btn" data-doc="${esc(f.document_id)}">${esc(f.evidence.document_title)}</button>${f.evidence.document_url ? `<a class="brief-doc-ext" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}`).join("")}</div>` : ""}`;
-    }).join("")}</section>`
-  ).join("");
+  const SKIP_SECTIONS = new Set(["recently_reviewed"]);
+  const labels = { what_changed: "What changed", follow_ups: "Decisions and follow-ups", knowledge_risks: "Knowledge risks", terminology_drift: "Terminology drift", duplicate_candidates: "Possible duplicates", orphaned_meetings: "Orphaned meeting notes" };
+  const sections = Object.entries(content.sections || {})
+    .filter(([key, claims]) => !SKIP_SECTIONS.has(key) && claims.length)
+    .map(([key, claims]) =>
+      `<section class="brief-section"><strong>${labels[key] || key}</strong>${claims.map(c => {
+        const evidence = c.evidence_ids.map(id => findingsById.get(id)).filter(Boolean);
+        const ctaSignal = c.cta_signal;
+        const text = ctaSignal
+          ? esc(c.text).replace(/— ([^—]+in the Doc Audit)\.$/, `— <a href="#review/${esc(ctaSignal)}">Doc Audit</a>.`)
+          : esc(c.text);
+        return `<p>${text}</p>${evidence.length ? `<div class="brief-links">${evidence.slice(0, 6).map(f => `<button class="brief-doc-btn" data-doc="${esc(f.document_id)}">${esc(f.evidence.document_title)}</button>${f.evidence.document_url ? `<a class="brief-doc-ext" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}`).join("")}</div>` : ""}`;
+      }).join("")}</section>`
+    ).join("");
   const viewerOptions = people.map(person => `<option value="${esc(person.id)}" ${person.id === state.viewerId ? "selected" : ""}>${esc(person.display_name || person.email || person.id)}</option>`).join("");
-  const recommendationRows = recommendations.recommendations.map(doc =>
-    `<div class="brief-recommendation"><button class="brief-doc-btn" data-doc="${esc(doc.id)}">${esc(doc.title)}</button><small>+${doc.gain} recent activity</small>${doc.url ? `<a class="brief-doc-ext" href="${esc(doc.url)}" target="_blank" rel="noreferrer" title="Read document">↗</a>` : ""}</div>`
+  const recommendationRows = recommendations.recommendations.slice(0, 4).map(doc =>
+    `<div class="brief-recommendation"><button class="brief-doc-btn" data-doc="${esc(doc.id)}">${esc(doc.title)}</button><small>+${doc.gain}</small>${doc.url ? `<a class="brief-doc-ext" href="${esc(doc.url)}" target="_blank" rel="noreferrer">↗</a>` : ""}</div>`
   ).join("");
-  const personalizationNote = recommendations.personalized
-    ? "Showing rising documents this person has not viewed."
-    : recommendations.attributed_view_events_available
-      ? "Choose a person to exclude documents they have already viewed."
-      : "Viewer identity is not available in the indexed activity, so these are the strongest rising documents.";
-  return `<article class="card brief"><div class="card-header"><div><h2>Leader brief</h2><p>${esc(brief.window_start)} to ${esc(brief.window_end)} · ${brief.polished ? "Polished" : "Deterministic"}</p></div><button class="button primary small" data-generate-brief>Regenerate</button></div>
-    <section class="brief-reading"><div class="brief-reading-header"><div><strong>Worth reading</strong><p>${esc(personalizationNote)}</p></div><label>Viewing as<select id="brief-viewer"><option value="">Unspecified</option>${viewerOptions}</select></label></div>${recommendationRows || `<p>No rising documents to recommend right now.</p>`}</section>
+  return `<article class="card brief"><div class="card-header"><div><h2>Team digest</h2><p>${esc(brief.window_start)} to ${esc(brief.window_end)} · ${brief.polished ? "Polished" : "Deterministic"}</p></div><button class="button primary small" data-generate-brief>Regenerate</button></div>
+    <section class="brief-reading"><div class="brief-reading-header"><strong>Worth reading</strong><label>Viewing as<select id="brief-viewer"><option value="">Everyone</option>${viewerOptions}</select></label></div>${recommendationRows || `<p class="muted">No rising documents right now.</p>`}</section>
     ${sections}</article>`;
 }
 
 async function overview() {
-  const [summary, rising, stale, hubs, findings, brief, people, recommendations, briefFindings] = await Promise.all([
-    cached("/overview"), cached("/analytics/rising?limit=6"), cached("/analytics/stale?limit=6"),
-    cached("/analytics/hubs?limit=6"), cached("/findings?active=true&limit=100"),
+  const [summary, findings, brief, people, recommendations, briefFindings] = await Promise.all([
+    cached("/overview"),
+    cached("/findings?active=true&limit=500"),
     api("/briefs/latest").catch(() => null),
     cached("/people"),
-    api(`/briefs/recommendations?limit=8${state.viewerId ? `&person_id=${encodeURIComponent(state.viewerId)}` : ""}`),
+    api(`/briefs/recommendations?limit=4${state.viewerId ? `&person_id=${encodeURIComponent(state.viewerId)}` : ""}`),
     cached("/findings?limit=500"),
   ]);
   document.querySelector("#review-count").textContent = reviewCount(findings) || "";
-  const risingRows = rising.map(d => dataRow(d, `${d.prior_activity} → ${d.recent_activity} activity`, `<span class="delta">+${d.gain}</span>`)).join("");
-  const riskRows = findings.slice(0, 6).map(f => dataRow({ id: f.document_id, title: f.evidence.document_title }, f.evidence.signal, badge(f.signal_type))).join("");
-  const hubRows = hubs.map(d => dataRow(d, "Referenced across the workspace", `<strong>${d.inbound_links}</strong>`)).join("");
+
+  const signalOrder = ["stale_hub","rising","went_quiet","terminology_drift","duplicate_candidate","orphaned_meeting_doc"];
+  const countBySignal = {};
+  findings.forEach(f => { countBySignal[f.signal_type] = (countBySignal[f.signal_type] || 0) + 1; });
+  const chips = signalOrder
+    .filter(s => countBySignal[s])
+    .map(s => `<a class="signal-chip ${s}" href="#review/${s}"><span class="signal-chip-label">${esc(signalLabel(s))}</span><span class="signal-chip-count">${countBySignal[s]}</span></a>`)
+    .join("");
+
   app.innerHTML = `
     <div class="summary-strip">
       ${metric("documents indexed", summary.documents_indexed, "Browse documents", "#documents")}
       ${metric("document links", summary.doc_links, "Explore graph", "#graph")}
       ${metric("external links", summary.external_links, "Explore destinations", "#external")}
-      ${metric("active findings", findings.length, "Open ops review", "#review")}
+      ${metric("active findings", findings.length, "Open doc audit", "#review")}
     </div>
-    <div class="grid two-col">
+    ${chips ? `<div class="signal-breakdown">${chips}</div>` : ""}
+    <div class="grid one-col" style="margin-top:18px">
       ${renderBrief(brief, briefFindings, recommendations, people)}
-      ${listCard("Priority signals", "Highest scoring active findings", riskRows)}
-    </div>
-    <div class="grid three-col" style="margin-top:18px">
-      ${listCard("Rising now", "Recent activity versus prior period", risingRows)}
-      ${listCard("Knowledge hubs", "Most referenced documents", hubRows)}
-      ${listCard("Went quiet", "Previously active documents", stale.map(d => dataRow(d, `${d.history_daily_avg}/day historically`, badge("stale"))).join(""))}
     </div>`;
 }
 
-async function review() {
+async function review(initialSignal = "") {
   const findings = await cached("/findings?limit=500");
   document.querySelector("#review-count").textContent = reviewCount(findings) || "";
+  const allSignalTypes = ["stale_hub","rising","went_quiet","terminology_drift","duplicate_candidate","orphaned_meeting_doc"];
   app.innerHTML = `
     <div class="filters">
       <input id="review-search" placeholder="Search findings">
       <select id="review-status"><option value="">All statuses</option>${["new","in_review","resolved","dismissed"].map(x => `<option>${x}</option>`).join("")}</select>
-      <select id="review-signal"><option value="">All signals</option>${["stale_hub","rising","went_quiet"].map(x => `<option>${x}</option>`).join("")}</select>
+      <select id="review-signal"><option value="">All signals</option>${allSignalTypes.map(x => `<option value="${esc(x)}" ${x === initialSignal ? "selected" : ""}>${esc(signalLabel(x))}</option>`).join("")}</select>
     </div>
-    <article class="card" id="findings-list">${findingsMarkup(findings)}</article>`;
+    <article class="card" id="findings-list"></article>`;
   const filter = () => {
     const search = document.querySelector("#review-search").value.toLowerCase();
     const status = document.querySelector("#review-status").value;
@@ -200,17 +197,17 @@ async function review() {
   document.querySelector("#review-search").oninput = filter;
   document.querySelector("#review-status").onchange = filter;
   document.querySelector("#review-signal").onchange = filter;
+  filter();
 }
 function findingsMarkup(findings) {
   if (!findings.length) return empty("No findings match these filters.");
   return findings.map(f => {
     const level = urgency(f.score);
-    return `<div class="finding">
+    return `<div class="finding" data-finding="${esc(f.id)}">
     <div class="urgency ${level.kind}">${level.label}</div>
-    <div><h3><button class="finding-title-btn" data-finding="${esc(f.id)}">${esc(f.evidence.document_title)}</button></h3><p>${esc(f.evidence.signal)}</p><div class="finding-meta">${badge(f.signal_type)} ${badge(f.status)} ${f.active ? "" : badge("inactive")}</div></div>
+    <div><h3>${esc(f.evidence.document_title)}</h3><p>${esc(f.evidence.signal)}</p><div class="finding-meta">${badge(signalLabel(f.signal_type))} ${badge(f.status)} ${f.active ? "" : badge("inactive")}</div></div>
     <div class="finding-actions">
-      ${f.evidence.document_url ? `<a class="button small" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open doc ↗</a>` : ""}
-      <button class="button small" data-finding="${esc(f.id)}">Review</button>
+      ${f.evidence.document_url ? `<a class="button small" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer" data-external>Open doc ↗</a>` : ""}
     </div>
   </div>`;
   }).join("");
@@ -417,9 +414,14 @@ function drawGraph(data, minInbound = 0, search = "", showAlignment = false, ali
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 
+  const hitTest = (mx, my) => [...byId.values()].find(n => mx >= n.x - n.w/2 && mx <= n.x + n.w/2 && my >= n.y - n.h/2 && my <= n.y + n.h/2);
+  canvas.onmousemove = event => {
+    const box = canvas.getBoundingClientRect();
+    canvas.style.cursor = hitTest(event.clientX - box.left, event.clientY - box.top) ? "pointer" : "default";
+  };
   canvas.onclick = event => {
-    const box = canvas.getBoundingClientRect(); const mx = event.clientX - box.left, my = event.clientY - box.top;
-    const hit = [...byId.values()].find(n => mx >= n.x - n.w/2 && mx <= n.x + n.w/2 && my >= n.y - n.h/2 && my <= n.y + n.h/2);
+    const box = canvas.getBoundingClientRect();
+    const hit = hitTest(event.clientX - box.left, event.clientY - box.top);
     if (hit) openDocument(hit.id);
   };
 }
@@ -477,7 +479,7 @@ async function openFinding(id) {
   ]);
   const level = urgency(f.score);
   drawerContent.innerHTML = `<p class="eyebrow">Operational finding</p><h2 class="drawer-title">${esc(f.evidence.document_title)}</h2>
-    <div class="finding-header-meta">${badge(level.label)} ${badge(f.signal_type)} ${badge(f.status)} <span class="muted finding-signal">${esc(f.evidence.signal)}</span>${f.evidence.document_url ? `<a class="finding-ext-link" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open doc ↗</a>` : ""}</div>
+    <div class="finding-header-meta">${badge(level.label)} ${badge(signalLabel(f.signal_type))} ${badge(f.status)} <span class="muted finding-signal">${esc(f.evidence.signal)}</span>${f.evidence.document_url ? `<a class="finding-ext-link" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open doc ↗</a>` : ""}</div>
     <section class="detail-section"><h3>Suggested action</h3><p>${esc(f.suggested_action)}</p></section>
     <section class="detail-section"><h3>Review</h3><form class="review-form" id="review-form">
       <div class="form-row"><select name="status">${["new","in_review","resolved","dismissed"].map(x => `<option ${x === f.status ? "selected" : ""}>${x}</option>`)}</select><select name="disposition"><option value="">No disposition</option>${["current_no_action","update_needed","deprecate","superseded","false_positive","monitor"].map(x => `<option ${x === f.disposition ? "selected" : ""}>${x}</option>`)}</select></div>
@@ -582,13 +584,19 @@ async function openIndexing() {
 }
 
 async function render() {
-  state.route = location.hash.slice(1) || "overview";
+  const hash = location.hash.slice(1) || "overview";
+  const slashIdx = hash.indexOf("/");
+  state.route = slashIdx >= 0 ? hash.slice(0, slashIdx) : hash;
+  const routeParam = slashIdx >= 0 ? hash.slice(slashIdx + 1) : "";
   if (!titles[state.route]) state.route = "overview";
   document.querySelector("#route-eyebrow").textContent = titles[state.route][0];
   document.querySelector("#route-title").textContent = titles[state.route][1];
   document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("active", a.dataset.route === state.route));
   app.innerHTML = `<div class="loading">Reading the workspace…</div>`;
-  try { await ({ overview, review, graph, documents, external, settings })[state.route](); }
+  try {
+    if (state.route === "review") await review(routeParam);
+    else await ({ overview, graph, documents, external, settings })[state.route]();
+  }
   catch (error) { app.innerHTML = `<article class="card empty"><h2>Could not load this view</h2><p>${esc(error.message)}</p></article>`; }
 }
 
@@ -603,6 +611,7 @@ drawer.addEventListener("click", event => {
   if (!inside) drawer.close();
 });
 document.addEventListener("click", event => {
+  if (event.target.closest("[data-external]")) return;
   const doc = event.target.closest("[data-doc]"); const finding = event.target.closest("[data-finding]");
   if (doc) openDocument(doc.dataset.doc);
   if (finding) openFinding(finding.dataset.finding);

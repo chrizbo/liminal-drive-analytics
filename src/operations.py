@@ -18,7 +18,16 @@ DISPOSITIONS = {
     "current_no_action", "update_needed", "deprecate", "superseded",
     "false_positive", "monitor",
 }
-SIGNAL_TYPES = {"stale_hub", "rising", "went_quiet"}
+SIGNAL_TYPES = {"stale_hub", "rising", "went_quiet", "terminology_drift", "duplicate_candidate", "orphaned_meeting_doc"}
+
+SIGNAL_DISPLAY_NAMES = {
+    "stale_hub": "Stale hub",
+    "rising": "Rising doc",
+    "went_quiet": "Went quiet",
+    "terminology_drift": "Terminology drift",
+    "duplicate_candidate": "Possible duplicate",
+    "orphaned_meeting_doc": "Orphaned meeting note",
+}
 
 
 def utc_now():
@@ -106,6 +115,56 @@ def detect_findings(conn, recent_days=7, prior_days=7):
             },
         ))
         seen.add(doc_id)
+
+    seen_drift = set()
+    for pair in _load_drift_pairs(conn):
+        doc_id = pair["src_id"]
+        if doc_id not in docs or doc_id in seen_drift:
+            continue
+        divergent = json.loads(pair["divergent_terms"]) if isinstance(pair["divergent_terms"], str) else (pair["divergent_terms"] or [])
+        score = direness_score("medium")
+        detected.append(_finding_payload(
+            doc_id, docs[doc_id], "terminology_drift", score,
+            f"Terminology drift with \"{pair['dst_title']}\"",
+            "Align terminology across these linked documents",
+            {
+                "dst_id": pair["dst_id"],
+                "dst_title": pair["dst_title"],
+                "divergent_terms": divergent[:6],
+            },
+        ))
+        seen_drift.add(doc_id)
+
+    seen_dup = set()
+    for pair in _load_duplicate_candidates(conn):
+        doc_id = pair["doc_a_id"]
+        if doc_id not in docs or doc_id in seen_dup:
+            continue
+        score = direness_score("low")
+        detected.append(_finding_payload(
+            doc_id, docs[doc_id], "duplicate_candidate", score,
+            f"Possible duplicate of \"{pair['doc_b_title']}\"",
+            "Consolidate or clarify which document is canonical",
+            {
+                "doc_b_id": pair["doc_b_id"],
+                "doc_b_title": pair["doc_b_title"],
+                "title_similarity": pair.get("title_similarity"),
+                "term_similarity": pair.get("term_similarity"),
+            },
+        ))
+        seen_dup.add(doc_id)
+
+    for orphan in _load_orphaned_meeting_docs(conn):
+        doc_id = orphan["doc_id"]
+        if doc_id not in docs:
+            continue
+        score = direness_score("low")
+        detected.append(_finding_payload(
+            doc_id, docs[doc_id], "orphaned_meeting_doc", score,
+            "Meeting note with no inbound links",
+            "Link from a relevant project document or archive it",
+            {"inbound_links": orphan["inbound_links"]},
+        ))
 
     return detected
 
@@ -370,7 +429,7 @@ def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None,
     if followups:
         sections["follow_ups"].append(_claim(
             f"{len(followups)} active finding{'s need' if len(followups) != 1 else ' needs'} "
-            "an operations review.", followups,
+            "review in the Doc Audit.", followups,
         ))
     if stale_hubs:
         sections["knowledge_risks"].append(_claim(
@@ -388,68 +447,23 @@ def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None,
             f"dismissed in the last {days} days.", reviewed,
         ))
     if drift_pairs:
-        for pair in drift_pairs[:3]:
-            divergent = json.loads(pair["divergent_terms"])[:4] if isinstance(pair["divergent_terms"], str) else (pair["divergent_terms"] or [])[:4]
-            terms_str = ", ".join(f'"{t}"' for t in divergent) if divergent else "several key terms"
-            sections["terminology_drift"].append({
-                "text": (
-                    f"\"{pair['src_title']}\" uses {terms_str} "
-                    f"which do not appear in \"{pair['dst_title']}\". "
-                    "This may indicate terminology drift between these linked documents."
-                ),
-                "evidence_ids": [],
-                "drift": {
-                    "src_id": pair["src_id"],
-                    "src_title": pair["src_title"],
-                    "src_url": pair.get("src_url"),
-                    "dst_id": pair["dst_id"],
-                    "dst_title": pair["dst_title"],
-                    "dst_url": pair.get("dst_url"),
-                    "divergent_terms": divergent,
-                },
-            })
+        n = len(drift_pairs)
+        sections["terminology_drift"].append({**_claim(
+            f"{n} linked document pair{'s have' if n != 1 else ' has'} terminology drift — "
+            "review and align in the Doc Audit.", [],
+        ), "cta_signal": "terminology_drift"})
     if duplicate_candidates:
-        for pair in duplicate_candidates[:3]:
-            title_sim = pair.get("title_similarity", 0)
-            term_sim = pair.get("term_similarity")
-            if title_sim >= 0.6:
-                reason = f"titles are {round(title_sim * 100)}% similar"
-            elif term_sim and term_sim >= 0.55:
-                reason = f"content overlaps {round(term_sim * 100)}%"
-            else:
-                reason = "similar title and content"
-            linked_note = "" if not pair["directly_linked"] else " They are already linked."
-            sections["duplicate_candidates"].append({
-                "text": (
-                    f"\"{pair['doc_a_title']}\" and \"{pair['doc_b_title']}\" "
-                    f"may cover the same topic ({reason}).{linked_note} "
-                    "Consider consolidating or clarifying which is canonical."
-                ),
-                "evidence_ids": [],
-                "duplicate": {
-                    "doc_a_id": pair["doc_a_id"],
-                    "doc_a_title": pair["doc_a_title"],
-                    "doc_b_id": pair["doc_b_id"],
-                    "doc_b_title": pair["doc_b_title"],
-                    "title_similarity": title_sim,
-                    "term_similarity": term_sim,
-                },
-            })
-
+        n = len(duplicate_candidates)
+        sections["duplicate_candidates"].append({**_claim(
+            f"{n} possible duplicate pair{'s detected' if n != 1 else ' detected'} — "
+            "consolidate or clarify scope in the Doc Audit.", [],
+        ), "cta_signal": "duplicate_candidate"})
     if orphaned_meeting_docs:
-        titles_list = ", ".join(f'"{d["doc_title"]}"' for d in orphaned_meeting_docs[:3])
-        more = len(orphaned_meeting_docs) - 3
-        more_str = f" and {more} more" if more > 0 else ""
-        sections["orphaned_meetings"].append({
-            "text": (
-                f"{len(orphaned_meeting_docs)} meeting doc{'s' if len(orphaned_meeting_docs) != 1 else ''} "
-                f"{'have' if len(orphaned_meeting_docs) != 1 else 'has'} no inbound links and may be unreachable: "
-                f"{titles_list}{more_str}. "
-                "Link key decisions to their source documents so they can be found."
-            ),
-            "evidence_ids": [],
-            "docs": [{"id": d["doc_id"], "title": d["doc_title"]} for d in orphaned_meeting_docs],
-        })
+        n = len(orphaned_meeting_docs)
+        sections["orphaned_meetings"].append({**_claim(
+            f"{n} meeting note{'s have' if n != 1 else ' has'} no inbound links and may be unreachable — "
+            "link or archive them in the Doc Audit.", [],
+        ), "cta_signal": "orphaned_meeting_doc"})
 
     return {"sections": sections}
 

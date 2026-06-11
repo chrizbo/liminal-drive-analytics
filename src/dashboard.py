@@ -20,8 +20,8 @@ from analytics import (activity_by_doc, stale_activity, title_map,
                        STALE_WINDOW_DAYS, STALE_RECENT_MAX)
 from utils import doc_url, mime_icon
 from operations import (
-    DISPOSITIONS, FINDING_STATUSES, generate_brief, get_finding, latest_brief, list_findings,
-    refresh_findings, update_review,
+    DISPOSITIONS, FINDING_STATUSES, SIGNAL_DISPLAY_NAMES, generate_brief, get_finding,
+    latest_brief, list_findings, refresh_findings, update_review,
 )
 from sources import load_sources
 
@@ -330,13 +330,15 @@ BRIEF_SECTION_LABELS = {
     "what_changed": "What changed",
     "follow_ups": "Decisions and follow-ups",
     "knowledge_risks": "Knowledge risks",
-    "recently_reviewed": "Recently reviewed",
+    "terminology_drift": "Terminology drift",
+    "duplicate_candidates": "Possible duplicates",
+    "orphaned_meetings": "Orphaned meeting notes",
 }
 
 
-def render_leader_brief(brief, findings_by_id):
+def render_team_digest(brief, findings_by_id):
     if not brief:
-        st.info("No Leader Brief has been generated yet.")
+        st.info("No Team Digest has been generated yet.")
         return
     content = brief["polished"] or brief["deterministic"]
     source = f"Polished with {brief['model']}" if brief["polished"] else "Deterministic"
@@ -476,7 +478,7 @@ def close_detail():
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
 tab_overview, tab_attention, tab_graph, tab_external, tab_detail = st.tabs([
-    "📊 Overview", "🎯 Ops Review", "🕸️ Graph", "🌐 External Links", "📄 Doc Detail"
+    "📊 Overview", "🔍 Doc Audit", "🕸️ Graph", "🌐 External Links", "📄 Doc Detail"
 ])
 
 activity      = data["activity"]
@@ -495,7 +497,7 @@ with tab_overview:
         )
     brief_col, deterministic_col, polished_col = st.columns([6, 2, 2])
     with brief_col:
-        st.subheader("Leader Brief")
+        st.subheader("Team Digest")
     with deterministic_col:
         if st.button("Generate brief", use_container_width=True):
             conn = connect(database_path)
@@ -516,7 +518,7 @@ with tab_overview:
             load_data.clear()
             st.rerun()
 
-    render_leader_brief(data["current_brief"], data["findings_by_id"])
+    render_team_digest(data["current_brief"], data["findings_by_id"])
 
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
@@ -602,17 +604,21 @@ with tab_overview:
 # ── Needs Attention tab ───────────────────────────────────────────────────────
 
 with tab_attention:
-    st.header("Ops Review")
+    st.header("Doc Audit")
     st.caption("Review and resolve persistent operational findings. Source documents are never modified.")
+
+    all_signal_types = ["stale_hub", "rising", "went_quiet", "terminology_drift", "duplicate_candidate", "orphaned_meeting_doc"]
+    signal_display = [SIGNAL_DISPLAY_NAMES.get(s, s) for s in all_signal_types]
+    signal_name_to_type = {SIGNAL_DISPLAY_NAMES.get(s, s): s for s in all_signal_types}
 
     filter_status, filter_signal, filter_activity = st.columns(3)
     status_filter = filter_status.multiselect(
         "Status", sorted(FINDING_STATUSES), default=["new", "in_review"]
     )
-    signal_filter = filter_signal.multiselect(
-        "Signal", ["stale_hub", "rising", "went_quiet"],
-        default=["stale_hub", "rising", "went_quiet"],
+    selected_signal_labels = filter_signal.multiselect(
+        "Signal", signal_display, default=signal_display,
     )
+    signal_filter = [signal_name_to_type[label] for label in selected_signal_labels]
     activity_filter = filter_activity.radio(
         "Activity", ["Active", "All", "Inactive"], horizontal=True
     )
@@ -635,9 +641,10 @@ with tab_attention:
         evidence = finding["evidence"]
         title = evidence.get("document_title", finding["document_id"])
         signal = evidence.get("signal", finding["signal_type"])
+        signal_label = SIGNAL_DISPLAY_NAMES.get(finding["signal_type"], finding["signal_type"])
         marker = "Active" if finding["active"] else "Inactive"
         with st.expander(
-            f"{finding['severity']} · {title} · {finding['status']} · {marker}",
+            f"{finding['severity']} · {signal_label} · {title} · {finding['status']} · {marker}",
             expanded=False,
         ):
             left, right = st.columns([2, 1])

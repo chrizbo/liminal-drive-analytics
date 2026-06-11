@@ -1,54 +1,68 @@
 # Liminal Drive Analytics
 
-> A graph-based analytics tool for Google Drive that gives operations leaders a pulse on their organization's knowledge — what's rising, what's stale, what's central, and how terminology is drifting across linked documents.
+> Your team's Google Drive has more to say than anyone's reading. Liminal surfaces what's rising, what's stale, what's drifting, and what needs attention — without anyone having to go looking.
 
 [![GitHub](https://img.shields.io/badge/github-chrizbo%2Fliminal--drive--analytics-blue?logo=github)](https://github.com/chrizbo/liminal-drive-analytics)
 
-### Who It's For
+## The Problem
 
-Operations people and leaders who want to understand how organizational knowledge actually flows — not just who owns what, but what's being used, what's trusted, and what's drifting.
+Team knowledge lives in Google Drive, but Drive was built for storage — not insight. You can't easily answer: *What docs is the team actually relying on? Which specs are outdated but still being linked? Are two teams using different words for the same thing?* You find out the hard way, when someone acts on stale information or two workstreams collide.
 
-### Philosophy
+Liminal connects your documents into a graph and watches how that graph changes over time. It answers the questions Drive doesn't.
 
-This project is an extension of the Living Documents concept from [Agentics Beyond Code](https://github.com/chrizbo/agentics-beyond-code): documents aren't static artifacts, they're living signals of organizational activity. By connecting them into a graph and tracking how that graph changes over time, you get a dynamic picture of what the org knows, values, and is actively working on.
+## Who It's For
+
+- **Team leads and PMs** who want a weekly pulse on what the team is reading, what's changed, and what to flag — without wading through Drive activity logs.
+- **Ops leads, TPMs, and Chiefs of Staff** who need a durable queue of knowledge health issues to work through: stale hubs, orphaned notes, duplicate specs, and terminology that's diverged across teams.
 
 ## Screenshots
 
-| Overview with Leader Brief | Terminology Drift in Brief |
+| Overview with Team Digest | Doc Audit queue |
 |---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Terminology Drift](docs/screenshots/terminology-drift.png) |
+| ![Overview](docs/screenshots/overview.png) | ![Doc Audit](docs/screenshots/doc-audit.png) |
 
-| Ops Review | Ops Review Panel |
+| Doc Audit detail panel | Document graph |
 |---|---|
-| ![Ops Review](docs/screenshots/needs-attention.png) | ![Ops Review Panel](docs/screenshots/ops-review-panel.png) |
-
-| Document Graph | Document Detail with Concept Alignment |
-|---|---|
-| ![Graph](docs/screenshots/graph.png) | ![Doc Detail](docs/screenshots/doc-detail.png) |
+| ![Doc Audit Detail](docs/screenshots/doc-audit-detail.png) | ![Graph](docs/screenshots/graph.png) |
 
 ## What It Does
 
-Liminal Drive Analytics builds a live graph of your organization's documents and the connections between them — links, activity, authorship — and surfaces patterns that are invisible when you look at documents one at a time.
+### Team Digest
 
-### Core Analytics
+The Overview page gives anyone on the team an at-a-glance picture of what's happening in the knowledge base this week:
 
-**Rising documents** — docs whose activity (edits, comments, views) is accelerating. Early signal for emerging projects, shifting priorities, or new initiatives gaining traction.
+- **Worth reading** — the docs gaining the most activity, personalized by role
+- **What changed** — which docs are newly rising and why
+- **Decisions and follow-ups** — a plain-language summary of what needs attention, with direct links into the Doc Audit for action
 
-**Stale documents** — docs that were once heavily linked or active but have gone quiet. Candidates for archiving, updating, or flagging as outdated before someone acts on wrong information.
+Signal chips at the top show active finding counts by type — click any chip to jump straight to that filter in the Doc Audit.
 
-**Key/hub documents** — docs with high in-degree (many other docs link to them). These are the navigation hubs of your knowledge base: onboarding docs, policy references, canonical specs. Losing or corrupting one has outsized impact.
+### Doc Audit
 
-**External link map** — every link out of Google Docs to external systems (Notion, Jira, GitHub, Confluence, etc.) becomes a typed node in the graph. Surfaces what knowledge lives outside Drive and in what proportions.
+A durable task queue for whoever owns knowledge health on the team. Each finding has a severity level, a suggested action, and a full review panel:
 
-**Leader Brief** — an actionable summary built from operational findings. Use **Viewing as** to see rising documents that person may not have viewed, then open the source documents directly. Document links in the brief open the document detail drawer inline. When Drive does not provide attributable viewer activity, the brief clearly falls back to broadly useful recommendations.
+- **Stale hubs** — documents with many inbound links that have gone quiet; high blast radius if they're wrong
+- **Rising docs** — newly active documents that may need freshness or owner review
+- **Went quiet** — docs that lost activity after a period of engagement
+- **Terminology drift** — linked document pairs using different words for the same concepts, detected automatically without an LLM
+- **Possible duplicates** — document pairs with overlapping content and similar titles
+- **Orphaned meeting notes** — meeting docs that were never linked into the broader knowledge base
 
-**Terminology Drift** — the Leader Brief flags linked document pairs where terminology diverges: documents that use different words for the same concepts. Detected deterministically (no LLM required) using term frequency analysis and Jaccard similarity across linked doc pairs. Inspired by the [Getting the Words Right](https://dotwork.com/getting-the-words-right) playbook on representation drift in organizations. See [docs/ontology-roadmap.md](docs/ontology-roadmap.md) for the phased plan toward LLM-enhanced semantic alignment.
+Click any row to open the full review panel: suggested action, status and disposition tracking, assignee, follow-up date, document metrics, and activity timeline — all without leaving the page.
 
-**Ops Review** — a durable review queue for stale hubs, rising documents, and documents that went quiet. Three urgency levels replace opaque numeric scores. Click a finding title to open its review panel, which includes the suggested action, review form, document metrics, activity timeline, link graph, and concept alignment — all in one place. Reviewers can assign, annotate, resolve, dismiss, and schedule follow-up without modifying source documents.
+### Document Graph
 
-**Background indexing** — request a fresh index from **Settings** and follow its active phase, current document, and progress without leaving the web app.
+An interactive graph of every document and the links between them. Filter by node type, focus on a single document to see its neighborhood, or enable alignment mode to spot terminology divergence visually. Hub documents (high inbound-link count) are highlighted — these are the load-bearing docs in your knowledge base.
 
-**Local settings** — configure the OpenAI model and path-significant external-link domains from the web app. Settings are persisted to `config.json`.
+### Background Indexing
+
+Trigger a fresh index from Settings. Watch active phase, current document, and progress live without leaving the web app. Supports personal Drive and Shared Drives; each Shared Drive gets its own isolated workspace in the selector.
+
+## Philosophy
+
+This project is an extension of the Living Documents concept from [Agentics Beyond Code](https://github.com/chrizbo/agentics-beyond-code): documents aren't static artifacts, they're living signals of organizational activity. By connecting them into a graph and tracking how that graph changes over time, you get a dynamic picture of what the org knows, values, and is actively working on.
+
+Terminology drift detection is inspired by the [Getting the Words Right](https://dotwork.com/getting-the-words-right) playbook on representation drift in organizations. See [docs/ontology-roadmap.md](docs/ontology-roadmap.md) for the phased plan toward LLM-enhanced semantic alignment.
 
 ## Project Structure
 
@@ -68,13 +82,13 @@ drive-analytics/
 │   ├── graph.py            # Graph construction and analysis
 │   ├── analytics.py        # Rising/stale/hub detection
 │   ├── ontology.py         # Term extraction and alignment scoring
-│   └── operations.py       # Leader Brief and Ops Review state
+│   └── operations.py       # Team Digest and Doc Audit state
 ├── web/
 │   ├── index.html          # Local web app shell
 │   ├── app.js              # Views, drawers, and interactions
 │   └── styles.css          # Google Drive-inspired interface
 ├── tests/                  # API, indexing, graph, and analytics tests
-└── data/                  # Local graph storage (gitignored)
+└── data/                   # Local graph storage (gitignored)
 ```
 
 ## Getting Started
@@ -96,7 +110,7 @@ cp config.example.json config.json
 Optional environment variables:
 
 ```bash
-export OPENAI_API_KEY=...                 # enables Leader Brief polishing
+export OPENAI_API_KEY=...                 # enables brief polishing
 export DRIVE_ANALYTICS_WRITE_TOKEN=...   # protects FastAPI POST/PATCH endpoints
 export DRIVE_ANALYTICS_CORS_ORIGINS=http://localhost:3000
 ```
@@ -111,26 +125,20 @@ python3 src/auth.py --verify
 python3 src/indexer.py --days 90 --expand
 ```
 
-To index a particular Shared Drive into its own selectable workspace, pass its
-root URL, ID, or any folder URL inside it:
+To index a particular Shared Drive into its own selectable workspace:
 
 ```bash
 python3 src/indexer.py --shared-drive "https://drive.google.com/drive/folders/0AP6VPalWOTU-Uk9PVA" --days 365 --expand
 ```
-
-Indexed Shared Drives appear by name in the web app's Workspace selector. Their
-documents and operational findings remain isolated from personal Drive data.
 
 ### 6. Launch the web app
 ```bash
 uvicorn src.api:app --reload
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The locally hosted web app opens in **Demo product team** mode by default. It includes the leader brief, analytics, urgency-based ops review, interactive document graph, document detail, external-link map, and settings. Switch to **Live Drive** or an indexed Shared Drive from the workspace selector.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The app opens in **Demo product team** mode by default. Switch to **Live Drive** or an indexed Shared Drive from the workspace selector.
 
-Open **Settings** and use **Index Drive** to request a fresh index for the selected Live or Shared Drive workspace. The progress screen reports the active phase, current document, and completion while the background job runs locally.
-
-Reset or prepare the demo dataset from the command line:
+Reset or prepare the demo dataset:
 
 ```bash
 python3 src/demo_data.py
@@ -141,9 +149,9 @@ python3 src/demo_data.py
 python3 -m pytest
 ```
 
-Interactive API documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) while the app is running.
+Interactive API documentation: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it in the `X-Admin-Token` header. Without a configured token, writes remain available for local use; set one before exposing the app beyond your machine.
+When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it in the `X-Admin-Token` header.
 
 ## Hosting
 
