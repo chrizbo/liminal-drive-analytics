@@ -155,6 +155,109 @@ def compute_alignment(conn, src_id: str, dst_id: str) -> dict:
     }
 
 
+def _title_similarity(a: str, b: str) -> float:
+    """Normalized edit distance between two lowercased titles (0=identical, 1=totally different)."""
+    import difflib
+    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def find_duplicate_candidates(conn, top_n: int = 30, jaccard_threshold: float = 0.55,
+                               title_threshold: float = 0.6) -> list[dict]:
+    """Return doc pairs that look like duplicates or iterations.
+
+    Two signals trigger a match:
+    - High Jaccard similarity (≥ jaccard_threshold) on top-N terms between unlinked docs, OR
+    - High title similarity (≥ title_threshold) between any two docs.
+    Pairs that already directly link each other are excluded (they're intentionally related).
+    """
+    try:
+        docs = conn.execute("SELECT id, title FROM documents").fetchall()
+        linked_pairs = {
+            (r["src_id"], r["dst_id"])
+            for r in conn.execute("SELECT src_id, dst_id FROM doc_links").fetchall()
+        }
+
+        results = []
+        doc_list = [dict(r) for r in docs]
+        seen = set()
+
+        for i, a in enumerate(doc_list):
+            for b in doc_list[i + 1:]:
+                pair_key = (a["id"], b["id"])
+                if pair_key in seen:
+                    continue
+                seen.add(pair_key)
+                directly_linked = (
+                    (a["id"], b["id"]) in linked_pairs or
+                    (b["id"], a["id"]) in linked_pairs
+                )
+
+                title_sim = _title_similarity(a["title"], b["title"])
+                term_sim = None
+
+                if not directly_linked:
+                    a_terms = _term_set(conn, a["id"], top_n)
+                    b_terms = _term_set(conn, b["id"], top_n)
+                    if a_terms and b_terms:
+                        union = a_terms | b_terms
+                        term_sim = len(a_terms & b_terms) / len(union) if union else 0.0
+
+                if title_sim >= title_threshold or (term_sim is not None and term_sim >= jaccard_threshold):
+                    results.append({
+                        "doc_a_id": a["id"],
+                        "doc_a_title": a["title"],
+                        "doc_b_id": b["id"],
+                        "doc_b_title": b["title"],
+                        "title_similarity": round(title_sim, 3),
+                        "term_similarity": round(term_sim, 3) if term_sim is not None else None,
+                        "directly_linked": directly_linked,
+                    })
+
+        results.sort(key=lambda r: max(
+            r["title_similarity"],
+            r["term_similarity"] or 0,
+        ), reverse=True)
+        return results[:10]
+    except Exception:
+        return []
+
+
+def find_orphaned_meeting_docs(conn, max_inbound: int = 0) -> list[dict]:
+    """Return docs that look like meeting notes with no inbound links.
+
+    Detection: title contains a meeting keyword AND inbound link count <= max_inbound.
+    """
+    MEETING_KEYWORDS = {
+        "meeting", "notes", "sync", "standup", "stand-up", "1:1", "one-on-one",
+        "weekly", "daily", "monthly", "quarterly", "retro", "retrospective",
+        "kickoff", "kick-off", "all hands", "allhands", "town hall", "townhall",
+        "debrief", "readout", "check-in", "checkin", "recap", "follow-up",
+        "followup", "agenda", "minutes", "offsite", "sprint review",
+    }
+    try:
+        docs = conn.execute("SELECT id, title FROM documents").fetchall()
+        in_deg = {
+            r["doc_id"]: r["cnt"]
+            for r in conn.execute(
+                "SELECT dst_id AS doc_id, COUNT(*) AS cnt FROM doc_links GROUP BY dst_id"
+            ).fetchall()
+        }
+        results = []
+        for doc in docs:
+            title_lower = doc["title"].lower()
+            if any(kw in title_lower for kw in MEETING_KEYWORDS):
+                degree = in_deg.get(doc["id"], 0)
+                if degree <= max_inbound:
+                    results.append({
+                        "doc_id": doc["id"],
+                        "doc_title": doc["title"],
+                        "inbound_links": degree,
+                    })
+        return results
+    except Exception:
+        return []
+
+
 def refresh_ontology(conn) -> None:
     """Recompute doc_alignment for all linked doc pairs that have term data."""
     pairs = conn.execute("SELECT DISTINCT src_id, dst_id FROM doc_links").fetchall()

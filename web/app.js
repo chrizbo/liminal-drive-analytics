@@ -109,7 +109,7 @@ function renderBrief(brief, findings, recommendations, people) {
   if (!brief) return `<article class="card brief"><div class="card-header"><div><h2>Leader brief</h2><p>No brief has been generated yet.</p></div><button class="button primary small" data-generate-brief>Generate brief</button></div></article>`;
   const content = brief.polished || brief.deterministic;
   const findingsById = new Map(findings.map(finding => [finding.id, finding]));
-  const labels = { what_changed: "What changed", follow_ups: "Decisions and follow-ups", knowledge_risks: "Knowledge risks", terminology_drift: "Terminology drift", recently_reviewed: "Recently reviewed" };
+  const labels = { what_changed: "What changed", follow_ups: "Decisions and follow-ups", knowledge_risks: "Knowledge risks", terminology_drift: "Terminology drift", duplicate_candidates: "Possible duplicates", orphaned_meetings: "Unreachable meeting docs", recently_reviewed: "Recently reviewed" };
   const sections = Object.entries(content.sections || {}).filter(([, claims]) => claims.length).map(([key, claims]) =>
     `<section class="brief-section"><strong>${labels[key] || key}</strong>${claims.map(c => {
       if (c.drift) {
@@ -117,6 +117,17 @@ function renderBrief(brief, findings, recommendations, people) {
           <button class="brief-doc-btn" data-doc="${esc(c.drift.src_id)}">${esc(c.drift.src_title)}</button>${c.drift.src_url ? `<a class="brief-doc-ext" href="${esc(c.drift.src_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}
           <button class="brief-doc-btn" data-doc="${esc(c.drift.dst_id)}">${esc(c.drift.dst_title)}</button>${c.drift.dst_url ? `<a class="brief-doc-ext" href="${esc(c.drift.dst_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}
         </div>`;
+      }
+      if (c.duplicate) {
+        return `<p>${esc(c.text)}</p><div class="brief-links">
+          <button class="brief-doc-btn" data-doc="${esc(c.duplicate.doc_a_id)}">${esc(c.duplicate.doc_a_title)}</button>
+          <button class="brief-doc-btn" data-doc="${esc(c.duplicate.doc_b_id)}">${esc(c.duplicate.doc_b_title)}</button>
+        </div>`;
+      }
+      if (c.docs) {
+        return `<p>${esc(c.text)}</p><div class="brief-links">${c.docs.slice(0, 4).map(d =>
+          `<button class="brief-doc-btn" data-doc="${esc(d.id)}">${esc(d.title)}</button>`
+        ).join("")}</div>`;
       }
       const evidence = c.evidence_ids.map(id => findingsById.get(id)).filter(Boolean);
       return `<p>${esc(c.text)}</p>${evidence.length ? `<div class="brief-links">${evidence.slice(0, 6).map(f => `<button class="brief-doc-btn" data-doc="${esc(f.document_id)}">${esc(f.evidence.document_title)}</button>${f.evidence.document_url ? `<a class="brief-doc-ext" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer" title="Open source document">↗</a>` : ""}`).join("")}</div>` : ""}`;

@@ -40,6 +40,11 @@ DOCUMENTS = [
     ("weekly", "Product Weekly - June 5", "devon@northstar.example", DOC_MIME, 3),
     ("old-requirements", "Orbit Mobile Requirements - Original Draft", "maya@northstar.example", DOC_MIME, 180),
     ("retro", "Orbit Beta Retrospective", "devon@northstar.example", DOC_MIME, 45),
+    ("onboarding-spec-v1", "Mobile Onboarding Product Spec", "maya@northstar.example", DOC_MIME, 90),
+    ("pricing-draft", "Packaging and Pricing - Draft", "maya@northstar.example", DOC_MIME, 55),
+    ("launch-sync", "Orbit Mobile Launch Sync - May 14", "devon@northstar.example", DOC_MIME, 28),
+    ("gtm-kickoff", "Orbit GTM Kickoff Notes", "elena@northstar.example", DOC_MIME, 22),
+    ("onboarding-standup", "Mobile Onboarding Weekly Standup", "priya@northstar.example", DOC_MIME, 18),
 ]
 
 LINKS = [
@@ -202,6 +207,58 @@ DOC_CONTENT = {
         page copy still in legal review, GTM launch campaign needs final approval. The weekly
         references the launch plan, roadmap, and beta feedback for context on current status.
         Next week: go/no-go review for the rollout with all workstream leads.
+    """,
+    "onboarding-spec-v1": """
+        Mobile Onboarding Product Spec. This spec covers the onboarding flow for Orbit Mobile.
+        The goal is to improve onboarding completion rate for new users. The setup flow has five
+        steps: account creation, team invite, first project, first integration, and first use of
+        the core feature. Key design principle: progressive disclosure. Do not front-load
+        configuration. The integration step is optional for individual accounts but required for
+        enterprise. The spec references the mobile onboarding research plan for user research
+        findings and the mobile API architecture decision for backend constraints. Target
+        completion rate is 65%. Current completion rate is 42%. This is an earlier draft of the
+        onboarding spec before the v2 revisions based on beta feedback.
+    """,
+    "pricing-draft": """
+        Packaging and Pricing - Draft. This document captures the draft packaging and pricing
+        for Orbit Mobile. We are evaluating three tiers: individual, team, and enterprise.
+        Individual tier is free with limited integrations. Team tier is per-seat with full
+        integrations and standard support. Enterprise tier includes SSO, audit logging, custom
+        contracts, and dedicated support. Pricing benchmarks reference competitor analysis.
+        The enterprise tier price point is contingent on the trust score positioning and the
+        compliance feature set. Revenue targets for Orbit Mobile: $2M ARR by end of year one.
+        Expansion MRR is a key metric for the enterprise tier. This draft was circulated for
+        internal review before the final packaging and pricing decision was made.
+    """,
+    "launch-sync": """
+        Orbit Mobile Launch Sync - May 14. Attendees: Devon, Maya, Elena, Sam. Status: launch
+        plan is on track. Engineering confirmed auth layer security review will complete by end
+        of week. GTM brief is in final review. Pricing page needs legal sign-off. Action items:
+        Devon to update launch checklist with engineering sign-offs by Friday. Elena to send
+        GTM brief for final approval by end of day. Sam to confirm support playbook is reviewed.
+        Maya to confirm go-live date with leadership. Next sync: May 21. The launch is tracking
+        for a soft launch with design partners in three weeks, general availability two weeks
+        after that. Rollout plan is unchanged from the launch plan document.
+    """,
+    "gtm-kickoff": """
+        Orbit GTM Kickoff Notes. Date: April 2. Attendees: Elena, Devon, Maya, Luis. Purpose:
+        align on go-to-market strategy and workstream owners before the launch planning begins.
+        Key decisions: primary motion is product-led with enterprise sales overlay. Elena owns
+        GTM brief and launch campaign. Devon owns launch plan and readiness checklist. Luis owns
+        metrics and reporting setup. Maya owns pricing and customer communications. Next steps:
+        Elena to draft GTM brief by April 10. Devon to share launch plan outline by April 7.
+        Open question: whether to do a phased rollout by region or by account tier. Action:
+        Devon to add rollout options to the launch plan for review at next sync.
+    """,
+    "onboarding-standup": """
+        Mobile Onboarding Weekly Standup. Date: May 28. Attendees: Priya, Maya, Devon.
+        Progress: onboarding spec v2 is in final review, targeting sign-off by end of week.
+        Activation experiment results confirmed — treatment ships next sprint. Research plan
+        findings have been synthesized into the beta feedback doc. Blockers: none. Metrics:
+        onboarding completion rate at 48% this week, up from 42% four weeks ago. The improvement
+        is attributed to the progressive disclosure changes already shipped. Next week target:
+        spec sign-off, experiment treatment in staging, begin support playbook review for
+        onboarding section. No blockers to report. Next standup: June 4.
     """,
 }
 

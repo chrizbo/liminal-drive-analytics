@@ -270,7 +270,12 @@ def generate_brief(conn, days=7, polish=False, now=None, openai_client=None, mod
         """, (f"{window_start}T00:00:00Z",)).fetchall()
     ]
     drift_pairs = _load_drift_pairs(conn)
-    deterministic = _build_brief_sections(findings, recently_reviewed, days, drift_pairs)
+    duplicate_candidates = _load_duplicate_candidates(conn)
+    orphaned_meeting_docs = _load_orphaned_meeting_docs(conn)
+    deterministic = _build_brief_sections(
+        findings, recently_reviewed, days, drift_pairs,
+        duplicate_candidates, orphaned_meeting_docs,
+    )
     polished = None
     used_model = None
     if polish:
@@ -318,7 +323,26 @@ def _load_drift_pairs(conn):
         return []
 
 
-def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None):
+def _load_duplicate_candidates(conn):
+    """Return likely duplicate or iteration doc pairs."""
+    try:
+        import ontology as _ontology
+        return _ontology.find_duplicate_candidates(conn)
+    except Exception:
+        return []
+
+
+def _load_orphaned_meeting_docs(conn):
+    """Return meeting-pattern docs with no inbound links."""
+    try:
+        import ontology as _ontology
+        return _ontology.find_orphaned_meeting_docs(conn)
+    except Exception:
+        return []
+
+
+def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None,
+                           duplicate_candidates=None, orphaned_meeting_docs=None):
     rising = [f for f in findings if f["signal_type"] == "rising"]
     stale_hubs = [f for f in findings if f["signal_type"] == "stale_hub"]
     quiet = [f for f in findings if f["signal_type"] == "went_quiet"]
@@ -330,6 +354,8 @@ def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None):
         "follow_ups": [],
         "knowledge_risks": [],
         "terminology_drift": [],
+        "duplicate_candidates": [],
+        "orphaned_meetings": [],
         "recently_reviewed": [],
     }
     if rising:
@@ -382,6 +408,49 @@ def _build_brief_sections(findings, recently_reviewed, days, drift_pairs=None):
                     "divergent_terms": divergent,
                 },
             })
+    if duplicate_candidates:
+        for pair in duplicate_candidates[:3]:
+            title_sim = pair.get("title_similarity", 0)
+            term_sim = pair.get("term_similarity")
+            if title_sim >= 0.6:
+                reason = f"titles are {round(title_sim * 100)}% similar"
+            elif term_sim and term_sim >= 0.55:
+                reason = f"content overlaps {round(term_sim * 100)}%"
+            else:
+                reason = "similar title and content"
+            linked_note = "" if not pair["directly_linked"] else " They are already linked."
+            sections["duplicate_candidates"].append({
+                "text": (
+                    f"\"{pair['doc_a_title']}\" and \"{pair['doc_b_title']}\" "
+                    f"may cover the same topic ({reason}).{linked_note} "
+                    "Consider consolidating or clarifying which is canonical."
+                ),
+                "evidence_ids": [],
+                "duplicate": {
+                    "doc_a_id": pair["doc_a_id"],
+                    "doc_a_title": pair["doc_a_title"],
+                    "doc_b_id": pair["doc_b_id"],
+                    "doc_b_title": pair["doc_b_title"],
+                    "title_similarity": title_sim,
+                    "term_similarity": term_sim,
+                },
+            })
+
+    if orphaned_meeting_docs:
+        titles_list = ", ".join(f'"{d["doc_title"]}"' for d in orphaned_meeting_docs[:3])
+        more = len(orphaned_meeting_docs) - 3
+        more_str = f" and {more} more" if more > 0 else ""
+        sections["orphaned_meetings"].append({
+            "text": (
+                f"{len(orphaned_meeting_docs)} meeting doc{'s' if len(orphaned_meeting_docs) != 1 else ''} "
+                f"{'have' if len(orphaned_meeting_docs) != 1 else 'has'} no inbound links and may be unreachable: "
+                f"{titles_list}{more_str}. "
+                "Link key decisions to their source documents so they can be found."
+            ),
+            "evidence_ids": [],
+            "docs": [{"id": d["doc_id"], "title": d["doc_title"]} for d in orphaned_meeting_docs],
+        })
+
     return {"sections": sections}
 
 
