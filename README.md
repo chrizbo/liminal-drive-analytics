@@ -159,3 +159,7 @@ When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it 
 - **Google Cloud** (production path) — Cloud Run for the web app, API, and indexer; Cloud Scheduler for periodic scans; Firestore or BigQuery for graph storage. Designed to migrate cleanly from local.
 
 See [SPEC.md](SPEC.md) for the full technical plan.
+
+## Service Planning
+
+The next product direction is a hosted private beta for Google Workspace teams on Google Cloud. See [specs/README.md](specs/README.md) for the beta plan, cloud architecture, and OAuth/security readiness checklist.
