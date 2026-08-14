@@ -68,6 +68,12 @@ filter='time >= "2023-01-01T00:00:00Z"'
 
 **Day-by-day granularity:** Achieved by grouping events by date client-side. Each event has a precise timestamp. Day-level aggregation is reliable for recent history; older data may have gaps.
 
+### Demo Mode
+
+Demo mode uses synthetic fixtures to model realistic product-team Drive activity without depending on real customer data or mutable Google audit history. Fixture activity may include generated views, edits, comments, reviewer notes, stale hub documents, and superseded planning docs so deterministic tests can validate metadata classification, activity rollups, stale/hub detection, and source ranking. The same fixtures can feed LLM evals for summarization, contradiction handling, source freshness, and evidence selection.
+
+Synthetic demo activity is not an audit-log replay. Google Drive activity cannot be backfilled, backdated, or impersonated, so demo fixtures should label generated activity clearly and keep it separate from live Drive Activity API results.
+
 ---
 
 ## Indexing Strategy

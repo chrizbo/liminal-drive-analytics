@@ -45,12 +45,12 @@ def _document_maps(conn):
     }
 
 
-def detect_findings(conn, recent_days=7, prior_days=7):
+def detect_findings(conn, recent_days=7, prior_days=7, now=None):
     """Return current operational signals with structured supporting evidence."""
     docs = _document_maps(conn)
     titles = title_map(conn)
-    activity = activity_by_doc(conn, days_recent=recent_days, days_prior=prior_days)
-    stale_act = stale_activity(conn)
+    activity = activity_by_doc(conn, days_recent=recent_days, days_prior=prior_days, now=now)
+    stale_act = stale_activity(conn, now=now)
     in_deg = dict(in_degree_rank(build_doc_graph(conn)))
     detected = []
     seen = set()
@@ -186,7 +186,7 @@ def _finding_payload(doc_id, doc, signal_type, score, signal, action, metrics):
 def refresh_findings(conn, recent_days=7, prior_days=7, now=None):
     """Synchronize current analytics into persistent findings."""
     now = now or utc_now()
-    detected = detect_findings(conn, recent_days, prior_days)
+    detected = detect_findings(conn, recent_days, prior_days, now=now)
     current_keys = {(item["document_id"], item["signal_type"]) for item in detected}
     created = 0
     updated = 0

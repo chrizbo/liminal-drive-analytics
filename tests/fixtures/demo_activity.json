@@ -1,0 +1,254 @@
+{
+  "fixture_name": "smart_drive_briefs_product_team_demo",
+  "fixture_version": 1,
+  "generated_at": "2026-08-14T15:05:00Z",
+  "source_folder": {
+    "id": "1DZJck2R33aEUkioWk7NSnh10NQhMa8eU",
+    "name": "Demo",
+    "url": "https://drive.google.com/drive/u/0/folders/1DZJck2R33aEUkioWk7NSnh10NQhMa8eU"
+  },
+  "mode": "synthetic_demo_activity",
+  "notes": [
+    "This fixture mirrors a real demo Drive folder, but actor names, counts, timestamps, and comments are synthetic.",
+    "Google Drive activity cannot be backfilled or impersonated, so this data models the activity shape expected by deterministic tests and LLM evals.",
+    "Strategy and OKR hubs are intentionally stale or superseded so answers can be evaluated for source freshness and contradiction handling."
+  ],
+  "people": [
+    {"id": "person-maya", "email": "maya.product@example.com", "display_name": "Maya Chen", "role": "PM"},
+    {"id": "person-devon", "email": "devon.eng@example.com", "display_name": "Devon Brooks", "role": "Engineering lead"},
+    {"id": "person-priya", "email": "priya.research@example.com", "display_name": "Priya Raman", "role": "Research lead"},
+    {"id": "person-elena", "email": "elena.design@example.com", "display_name": "Elena Park", "role": "Design lead"},
+    {"id": "person-luis", "email": "luis.data@example.com", "display_name": "Luis Ortega", "role": "Data lead"}
+  ],
+  "documents": [
+    {
+      "id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g",
+      "title": "PRD - Smart Drive Briefs",
+      "artifact_type": "prd",
+      "status": "current",
+      "owner": "maya.product@example.com",
+      "created_at": "2026-08-14T14:54:34Z",
+      "modified_at": "2026-08-14T15:00:24Z",
+      "url": "https://docs.google.com/document/d/1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g/edit",
+      "source_role": "primary_evidence",
+      "activity_profile": "recently_edited_current_source",
+      "summary": "Defines Smart Drive Briefs requirements: source titles, confidence labels, stale-document warnings, deterministic folder metadata, and LLM contradiction analysis."
+    },
+    {
+      "id": "1fmXWp1jNpHwKA8gB_Fnsmi50h3d0XmB8xcegy8WcY7g",
+      "title": "User research synthesis - PM workflows",
+      "artifact_type": "research",
+      "status": "current",
+      "owner": "priya.research@example.com",
+      "created_at": "2026-08-14T14:54:44Z",
+      "modified_at": "2026-08-14T14:59:48Z",
+      "url": "https://docs.google.com/document/d/1fmXWp1jNpHwKA8gB_Fnsmi50h3d0XmB8xcegy8WcY7g/edit",
+      "source_role": "primary_evidence",
+      "activity_profile": "active_research_source",
+      "summary": "Synthesizes PM workflow research and identifies stale planning artifacts as a major trust risk."
+    },
+    {
+      "id": "1plfvPmfmLK717wcBeS9dd9ncKSWoGTPpHWiTGQF_Bp0",
+      "title": "Q3 roadmap planning notes",
+      "artifact_type": "roadmap_notes",
+      "status": "current",
+      "owner": "maya.product@example.com",
+      "created_at": "2026-08-14T14:54:45Z",
+      "modified_at": "2026-08-14T14:59:49Z",
+      "url": "https://docs.google.com/document/d/1plfvPmfmLK717wcBeS9dd9ncKSWoGTPpHWiTGQF_Bp0/edit",
+      "source_role": "primary_evidence",
+      "activity_profile": "current_direction_source",
+      "summary": "Supersedes dashboard-first planning and prioritizes question-led Smart Drive Briefs for beta."
+    },
+    {
+      "id": "1qQ1D5PkoI9NRxIDTJ18EIlkRr8CTVwgZSipwIHQjyDM",
+      "title": "Experiment brief - source-aware answers",
+      "artifact_type": "experiment_brief",
+      "status": "active",
+      "owner": "luis.data@example.com",
+      "created_at": "2026-08-14T14:54:47Z",
+      "modified_at": "2026-08-14T14:59:49Z",
+      "url": "https://docs.google.com/document/d/1qQ1D5PkoI9NRxIDTJ18EIlkRr8CTVwgZSipwIHQjyDM/edit",
+      "source_role": "eval_design",
+      "activity_profile": "active_eval_source",
+      "summary": "Defines success criteria and eval prompts for source-aware answers and stale-context detection."
+    },
+    {
+      "id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg",
+      "title": "Beta launch checklist",
+      "artifact_type": "launch_checklist",
+      "status": "current",
+      "owner": "devon.eng@example.com",
+      "created_at": "2026-08-14T14:54:50Z",
+      "modified_at": "2026-08-14T15:00:38Z",
+      "url": "https://docs.google.com/document/d/1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg/edit",
+      "source_role": "primary_evidence",
+      "activity_profile": "blocked_launch_source",
+      "summary": "Says beta is blocked until source attribution, stale-document warnings, permission-safe ingestion, and contradiction evals are complete."
+    },
+    {
+      "id": "1CPyTX7N76OkA_nHnjyVEbTSXl5M6cCWp1liBC95V_RQ",
+      "title": "Metrics readout - week 32",
+      "artifact_type": "metrics_readout",
+      "status": "current",
+      "owner": "luis.data@example.com",
+      "created_at": "2026-08-14T14:54:51Z",
+      "modified_at": "2026-08-14T14:59:50Z",
+      "url": "https://docs.google.com/document/d/1CPyTX7N76OkA_nHnjyVEbTSXl5M6cCWp1liBC95V_RQ/edit",
+      "source_role": "supporting_context",
+      "activity_profile": "current_metrics_source",
+      "summary": "Shows source-grounded answers are useful, but stale-context detection remains weak."
+    },
+    {
+      "id": "1eP2hIS7wgiy_ca5Ak2KEqPI36_Gu3UGF9btzIZ2SXAw",
+      "title": "Design handoff - brief cards",
+      "artifact_type": "design_handoff",
+      "status": "current",
+      "owner": "elena.design@example.com",
+      "created_at": "2026-08-14T14:54:52Z",
+      "modified_at": "2026-08-14T14:59:51Z",
+      "url": "https://docs.google.com/document/d/1eP2hIS7wgiy_ca5Ak2KEqPI36_Gu3UGF9btzIZ2SXAw/edit",
+      "source_role": "supporting_context",
+      "activity_profile": "active_design_source",
+      "summary": "Specifies answer cards, evidence panels, caveats, and stale-context warning states."
+    },
+    {
+      "id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E",
+      "title": "Decision log",
+      "artifact_type": "decision_log",
+      "status": "current",
+      "owner": "maya.product@example.com",
+      "created_at": "2026-08-14T14:54:53Z",
+      "modified_at": "2026-08-14T15:00:51Z",
+      "url": "https://docs.google.com/document/d/1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E/edit",
+      "source_role": "primary_evidence",
+      "activity_profile": "recent_decision_source",
+      "summary": "Records accepted decisions: question-led analysis, stale-context warnings, source roles, and deferring admin analytics."
+    },
+    {
+      "id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0",
+      "title": "Strategy hub - FY26 product direction",
+      "artifact_type": "strategy_hub",
+      "status": "possibly_stale",
+      "owner": "maya.product@example.com",
+      "created_at": "2026-08-14T14:55:03Z",
+      "modified_at": "2026-08-14T15:00:44Z",
+      "url": "https://docs.google.com/document/d/1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0/edit",
+      "source_role": "stale_or_superseded_context",
+      "activity_profile": "stale_hub_recent_review_note",
+      "summary": "Historical strategy hub with dashboard-first language that conflicts with the current roadmap and decision log."
+    },
+    {
+      "id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI",
+      "title": "OKR hub - Q2 planning snapshot",
+      "artifact_type": "okr_hub",
+      "status": "stale",
+      "owner": "maya.product@example.com",
+      "created_at": "2026-08-14T14:55:04Z",
+      "modified_at": "2026-08-14T15:00:47Z",
+      "url": "https://docs.google.com/document/d/1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI/edit",
+      "source_role": "stale_or_superseded_context",
+      "activity_profile": "stale_hub_recent_review_note",
+      "summary": "Q2 snapshot with a superseded dashboard-first objective, while trust and stale-document KRs remain relevant."
+    }
+  ],
+  "links": [
+    {"src_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "dst_id": "1fmXWp1jNpHwKA8gB_Fnsmi50h3d0XmB8xcegy8WcY7g", "relationship": "uses_research"},
+    {"src_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "dst_id": "1plfvPmfmLK717wcBeS9dd9ncKSWoGTPpHWiTGQF_Bp0", "relationship": "aligned_to"},
+    {"src_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg", "dst_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "relationship": "requires"},
+    {"src_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg", "dst_id": "1qQ1D5PkoI9NRxIDTJ18EIlkRr8CTVwgZSipwIHQjyDM", "relationship": "blocked_by_eval_gap"},
+    {"src_id": "1plfvPmfmLK717wcBeS9dd9ncKSWoGTPpHWiTGQF_Bp0", "dst_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "relationship": "supersedes"},
+    {"src_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "dst_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "relationship": "supersedes"},
+    {"src_id": "1eP2hIS7wgiy_ca5Ak2KEqPI36_Gu3UGF9btzIZ2SXAw", "dst_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "relationship": "implements"},
+    {"src_id": "1CPyTX7N76OkA_nHnjyVEbTSXl5M6cCWp1liBC95V_RQ", "dst_id": "1qQ1D5PkoI9NRxIDTJ18EIlkRr8CTVwgZSipwIHQjyDM", "relationship": "informs_eval"}
+  ],
+  "activity_snapshots": [
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-08", "views": 4, "edits": 1, "comments": 0},
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-09", "views": 6, "edits": 2, "comments": 1},
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-10", "views": 9, "edits": 3, "comments": 1},
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-11", "views": 13, "edits": 4, "comments": 2},
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-12", "views": 18, "edits": 5, "comments": 3},
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-13", "views": 22, "edits": 4, "comments": 3},
+    {"document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "date": "2026-08-14", "views": 30, "edits": 6, "comments": 4},
+    {"document_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg", "date": "2026-08-12", "views": 8, "edits": 2, "comments": 1},
+    {"document_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg", "date": "2026-08-13", "views": 15, "edits": 3, "comments": 2},
+    {"document_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg", "date": "2026-08-14", "views": 24, "edits": 4, "comments": 3},
+    {"document_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "date": "2026-08-11", "views": 3, "edits": 1, "comments": 0},
+    {"document_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "date": "2026-08-12", "views": 7, "edits": 2, "comments": 1},
+    {"document_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "date": "2026-08-13", "views": 11, "edits": 3, "comments": 1},
+    {"document_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "date": "2026-08-14", "views": 18, "edits": 4, "comments": 2},
+    {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-06-01", "views": 20, "edits": 2, "comments": 3},
+    {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-06-08", "views": 14, "edits": 1, "comments": 2},
+    {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-08-14", "views": 2, "edits": 1, "comments": 1},
+    {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-05-15", "views": 18, "edits": 2, "comments": 2},
+    {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-06-15", "views": 12, "edits": 1, "comments": 1},
+    {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-08-14", "views": 1, "edits": 1, "comments": 1}
+  ],
+  "person_activity": [
+    {"person_id": "person-maya", "document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "action": "edit", "last_seen": "2026-08-14T15:00:24Z", "count": 8},
+    {"person_id": "person-devon", "document_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg", "action": "edit", "last_seen": "2026-08-14T15:00:38Z", "count": 6},
+    {"person_id": "person-priya", "document_id": "1fmXWp1jNpHwKA8gB_Fnsmi50h3d0XmB8xcegy8WcY7g", "action": "edit", "last_seen": "2026-08-14T14:59:48Z", "count": 4},
+    {"person_id": "person-elena", "document_id": "1eP2hIS7wgiy_ca5Ak2KEqPI36_Gu3UGF9btzIZ2SXAw", "action": "comment", "last_seen": "2026-08-14T15:01:20Z", "count": 3},
+    {"person_id": "person-luis", "document_id": "1qQ1D5PkoI9NRxIDTJ18EIlkRr8CTVwgZSipwIHQjyDM", "action": "edit", "last_seen": "2026-08-14T14:59:49Z", "count": 5}
+  ],
+  "comments": [
+    {
+      "document_id": "1Xso_Qv_ZfprjFHYPXVfe3ugCCjTkuoszC4H1xP73SGg",
+      "author": "Devon Brooks",
+      "created_at": "2026-08-14T15:01:00Z",
+      "quoted_text": "stale-document eval cases are now considered a release blocker",
+      "content": "Demo activity: mark this as the launch-readiness blocker the brief should surface first."
+    },
+    {
+      "document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0",
+      "author": "Maya Chen",
+      "created_at": "2026-08-14T15:01:30Z",
+      "quoted_text": "dashboard-first language conflicts with current roadmap notes",
+      "content": "Demo activity: this is intentionally stale context and should not be treated as current strategy."
+    },
+    {
+      "document_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E",
+      "author": "Luis Ortega",
+      "created_at": "2026-08-14T15:02:00Z",
+      "quoted_text": "one that downranks stale hubs and one that surfaces them with warnings",
+      "content": "Demo activity: useful for eval variants around ranking stale hub docs."
+    }
+  ],
+  "expected_deterministic_labels": {
+    "current_primary_sources": [
+      "PRD - Smart Drive Briefs",
+      "Q3 roadmap planning notes",
+      "Beta launch checklist",
+      "Decision log"
+    ],
+    "stale_or_superseded_sources": [
+      "Strategy hub - FY26 product direction",
+      "OKR hub - Q2 planning snapshot"
+    ],
+    "current_direction": "Question-led Smart Drive Briefs are the beta focus; dashboard-first planning is superseded.",
+    "launch_blocker": "Stale-document warning logic and contradiction eval coverage remain release blockers."
+  },
+  "llm_eval_prompts": [
+    {
+      "id": "current_product_direction",
+      "prompt": "What is the current product direction?",
+      "must_include": ["question-led analysis", "Smart Drive Briefs", "dashboard-first is superseded"],
+      "preferred_sources": ["Q3 roadmap planning notes", "Decision log", "PRD - Smart Drive Briefs"],
+      "stale_sources_to_flag": ["Strategy hub - FY26 product direction", "OKR hub - Q2 planning snapshot"]
+    },
+    {
+      "id": "launch_readiness",
+      "prompt": "Is the beta ready to launch?",
+      "must_include": ["not ready", "stale-document warnings", "eval coverage"],
+      "preferred_sources": ["Beta launch checklist", "Decision log", "Experiment brief - source-aware answers"],
+      "stale_sources_to_flag": ["Strategy hub - FY26 product direction", "OKR hub - Q2 planning snapshot"]
+    },
+    {
+      "id": "outdated_docs",
+      "prompt": "Which docs look outdated or superseded?",
+      "must_include": ["Strategy hub - FY26 product direction", "OKR hub - Q2 planning snapshot"],
+      "preferred_sources": ["Q3 roadmap planning notes", "Decision log"],
+      "stale_sources_to_flag": ["Strategy hub - FY26 product direction", "OKR hub - Q2 planning snapshot"]
+    }
+  ]
+}

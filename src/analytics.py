@@ -14,11 +14,21 @@ STALE_RECENT_MAX     = 2    # max activity in stale window to still count as sta
 STALE_HISTORY_MIN    = 3    # minimum historical daily avg to care about at all
 
 
-def activity_by_doc(conn, days_recent=7, days_prior=7):
+def _today(now=None):
+    if now is None:
+        return datetime.now(timezone.utc).date()
+    if isinstance(now, str):
+        return datetime.fromisoformat(now.replace("Z", "+00:00")).date()
+    if isinstance(now, datetime):
+        return now.date()
+    return now
+
+
+def activity_by_doc(conn, days_recent=7, days_prior=7, now=None):
     """Returns {doc_id: {recent: N, prior: N}} activity totals."""
-    now = datetime.now(timezone.utc).date()
-    recent_start = (now - timedelta(days=days_recent)).isoformat()
-    prior_start = (now - timedelta(days=days_recent + days_prior)).isoformat()
+    today = _today(now)
+    recent_start = (today - timedelta(days=days_recent)).isoformat()
+    prior_start = (today - timedelta(days=days_recent + days_prior)).isoformat()
     prior_end = recent_start
 
     recent = {}
@@ -43,14 +53,14 @@ def activity_by_doc(conn, days_recent=7, days_prior=7):
     return {doc_id: {"recent": recent.get(doc_id, 0), "prior": prior.get(doc_id, 0)} for doc_id in all_ids}
 
 
-def stale_activity(conn):
+def stale_activity(conn, now=None):
     """
     Returns {doc_id: {recent_30d: N, history_total: N, history_daily_avg: F}}
     Recent = last 30 days. History = prior 90 days before that.
     """
-    now = datetime.now(timezone.utc).date()
-    recent_start  = (now - timedelta(days=STALE_WINDOW_DAYS)).isoformat()
-    history_start = (now - timedelta(days=STALE_WINDOW_DAYS + STALE_HISTORY_DAYS)).isoformat()
+    today = _today(now)
+    recent_start  = (today - timedelta(days=STALE_WINDOW_DAYS)).isoformat()
+    history_start = (today - timedelta(days=STALE_WINDOW_DAYS + STALE_HISTORY_DAYS)).isoformat()
 
     recent = {}
     for row in conn.execute("""
