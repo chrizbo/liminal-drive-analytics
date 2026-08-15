@@ -10,6 +10,13 @@ from analytics import (
     STALE_WINDOW_DAYS, STALE_RECENT_MAX,
 )
 from graph import build_doc_graph, in_degree_rank
+from storage import (
+    active_finding_row, active_finding_rows, brief_row, deactivate_finding,
+    drift_pair_rows, finding_review_event_rows, finding_row, finding_rows,
+    insert_brief, insert_finding, insert_finding_review_event, latest_brief_id,
+    max_alignment_score, recently_reviewed_finding_rows, update_finding_detection,
+    update_finding_review,
+)
 from utils import doc_url, direness_score, severity_label
 
 
@@ -34,24 +41,25 @@ def utc_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _document_maps(conn):
-    rows = conn.execute("SELECT id, title, mime_type, web_url FROM documents").fetchall()
+def _document_maps(conn, scope=None):
+    from storage import document_lookup_maps
+    titles, mimes, web_urls = document_lookup_maps(conn, scope)
     return {
-        row["id"]: {
-            "title": row["title"],
-            "url": doc_url(row["id"], row["web_url"] or "", row["mime_type"] or ""),
+        doc_id: {
+            "title": title,
+            "url": doc_url(doc_id, web_urls.get(doc_id, ""), mimes.get(doc_id, "")),
         }
-        for row in rows
+        for doc_id, title in titles.items()
     }
 
 
-def detect_findings(conn, recent_days=7, prior_days=7, now=None):
+def detect_findings(conn, recent_days=7, prior_days=7, now=None, scope=None):
     """Return current operational signals with structured supporting evidence."""
-    docs = _document_maps(conn)
-    titles = title_map(conn)
-    activity = activity_by_doc(conn, days_recent=recent_days, days_prior=prior_days, now=now)
-    stale_act = stale_activity(conn, now=now)
-    in_deg = dict(in_degree_rank(build_doc_graph(conn)))
+    docs = _document_maps(conn, scope)
+    titles = title_map(conn, scope)
+    activity = activity_by_doc(conn, days_recent=recent_days, days_prior=prior_days, now=now, scope=scope)
+    stale_act = stale_activity(conn, now=now, scope=scope)
+    in_deg = dict(in_degree_rank(build_doc_graph(conn, scope)))
     detected = []
     seen = set()
 
@@ -117,7 +125,7 @@ def detect_findings(conn, recent_days=7, prior_days=7, now=None):
         seen.add(doc_id)
 
     seen_drift = set()
-    for pair in _load_drift_pairs(conn):
+    for pair in _load_drift_pairs(conn, scope):
         doc_id = pair["src_id"]
         if doc_id not in docs or doc_id in seen_drift:
             continue
@@ -136,7 +144,7 @@ def detect_findings(conn, recent_days=7, prior_days=7, now=None):
         seen_drift.add(doc_id)
 
     seen_dup = set()
-    for pair in _load_duplicate_candidates(conn):
+    for pair in _load_duplicate_candidates(conn, scope):
         doc_id = pair["doc_a_id"]
         if doc_id not in docs or doc_id in seen_dup:
             continue
@@ -154,7 +162,7 @@ def detect_findings(conn, recent_days=7, prior_days=7, now=None):
         ))
         seen_dup.add(doc_id)
 
-    for orphan in _load_orphaned_meeting_docs(conn):
+    for orphan in _load_orphaned_meeting_docs(conn, scope):
         doc_id = orphan["doc_id"]
         if doc_id not in docs:
             continue
@@ -183,54 +191,52 @@ def _finding_payload(doc_id, doc, signal_type, score, signal, action, metrics):
     }
 
 
-def refresh_findings(conn, recent_days=7, prior_days=7, now=None):
+def refresh_findings(conn, recent_days=7, prior_days=7, now=None, scope=None):
     """Synchronize current analytics into persistent findings."""
     now = now or utc_now()
-    detected = detect_findings(conn, recent_days, prior_days, now=now)
+    detected = detect_findings(conn, recent_days, prior_days, now=now, scope=scope)
     current_keys = {(item["document_id"], item["signal_type"]) for item in detected}
     created = 0
     updated = 0
+    tenant_id = scope.tenant_id if scope else None
+    workspace_id = scope.workspace_id if scope else None
 
     for item in detected:
         evidence_json = json.dumps(item, sort_keys=True)
-        existing = conn.execute("""
-            SELECT id FROM findings
-            WHERE document_id = ? AND signal_type = ? AND active = 1
-        """, (item["document_id"], item["signal_type"])).fetchone()
+        existing = active_finding_row(conn, item["document_id"], item["signal_type"], scope)
         if existing:
-            conn.execute("""
-                UPDATE findings SET score=?, severity=?, suggested_action=?,
-                    evidence_json=?, last_detected_at=?, updated_at=?
-                WHERE id=?
-            """, (
-                item["score"], item["severity"], item["suggested_action"],
-                evidence_json, now, now, existing["id"],
-            ))
+            update_finding_detection(conn, existing["id"], {
+                "score": item["score"],
+                "severity": item["severity"],
+                "suggested_action": item["suggested_action"],
+                "evidence_json": evidence_json,
+                "last_detected_at": now,
+                "updated_at": now,
+            }, scope)
             updated += 1
         else:
-            conn.execute("""
-                INSERT INTO findings (
-                    id, document_id, signal_type, score, severity, suggested_action,
-                    evidence_json, first_detected_at, last_detected_at, active,
-                    status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'new', ?, ?)
-            """, (
-                str(uuid.uuid4()), item["document_id"], item["signal_type"],
-                item["score"], item["severity"], item["suggested_action"],
-                evidence_json, now, now, now, now,
-            ))
+            insert_finding(conn, {
+                "id": str(uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+                "document_id": item["document_id"],
+                "signal_type": item["signal_type"],
+                "score": item["score"],
+                "severity": item["severity"],
+                "suggested_action": item["suggested_action"],
+                "evidence_json": evidence_json,
+                "first_detected_at": now,
+                "last_detected_at": now,
+                "created_at": now,
+                "updated_at": now,
+            })
             created += 1
 
     deactivated = 0
-    active_rows = conn.execute(
-        "SELECT id, document_id, signal_type FROM findings WHERE active = 1"
-    ).fetchall()
+    active_rows = active_finding_rows(conn, scope)
     for row in active_rows:
         if (row["document_id"], row["signal_type"]) not in current_keys:
-            conn.execute(
-                "UPDATE findings SET active=0, updated_at=? WHERE id=?",
-                (now, row["id"]),
-            )
+            deactivate_finding(conn, row["id"], now, scope)
             deactivated += 1
 
     conn.commit()
@@ -238,38 +244,18 @@ def refresh_findings(conn, recent_days=7, prior_days=7, now=None):
 
 
 def list_findings(conn, status=None, active=None, signal_type=None, assignee=None,
-                  severity=None, limit=100):
-    clauses = []
-    params = []
-    for column, value in (
-        ("status", status), ("signal_type", signal_type),
-        ("assignee", assignee), ("severity", severity),
-    ):
-        if value:
-            clauses.append(f"{column} = ?")
-            params.append(value)
-    if active is not None:
-        clauses.append("active = ?")
-        params.append(1 if active else 0)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(limit)
-    rows = conn.execute(f"""
-        SELECT * FROM findings {where}
-        ORDER BY active DESC, score DESC, last_detected_at DESC LIMIT ?
-    """, params).fetchall()
+                  severity=None, limit=100, scope=None):
+    rows = finding_rows(conn, status, active, signal_type, assignee, severity, limit, scope)
     return [_decode_finding(row) for row in rows]
 
 
-def get_finding(conn, finding_id):
-    row = conn.execute("SELECT * FROM findings WHERE id=?", (finding_id,)).fetchone()
+def get_finding(conn, finding_id, scope=None):
+    row = finding_row(conn, finding_id, scope)
     if not row:
         return None
     finding = _decode_finding(row)
     finding["review_history"] = [
-        dict(event) for event in conn.execute("""
-            SELECT status, disposition, reviewer, assignee, note, follow_up_date, created_at
-            FROM finding_review_events WHERE finding_id=? ORDER BY id DESC
-        """, (finding_id,))
+        dict(event) for event in finding_review_event_rows(conn, finding_id, scope)
     ]
     return finding
 
@@ -281,9 +267,9 @@ def _decode_finding(row):
     return result
 
 
-def update_review(conn, finding_id, values, now=None):
+def update_review(conn, finding_id, values, now=None, scope=None):
     now = now or utc_now()
-    existing = conn.execute("SELECT * FROM findings WHERE id=?", (finding_id,)).fetchone()
+    existing = finding_row(conn, finding_id, scope)
     if not existing:
         return None
     status = values.get("status", existing["status"])
@@ -297,40 +283,44 @@ def update_review(conn, finding_id, values, now=None):
         for key in ("reviewer", "assignee", "note", "follow_up_date")
     }
     reviewed_at = now if status in {"resolved", "dismissed"} else existing["reviewed_at"]
-    conn.execute("""
-        UPDATE findings SET status=?, disposition=?, reviewer=?, assignee=?, note=?,
-            follow_up_date=?, reviewed_at=?, updated_at=? WHERE id=?
-    """, (
-        status, disposition, merged["reviewer"], merged["assignee"], merged["note"],
-        merged["follow_up_date"], reviewed_at, now, finding_id,
-    ))
-    conn.execute("""
-        INSERT INTO finding_review_events (
-            finding_id, status, disposition, reviewer, assignee, note,
-            follow_up_date, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        finding_id, status, disposition, merged["reviewer"], merged["assignee"],
-        merged["note"], merged["follow_up_date"], now,
-    ))
+    update_finding_review(conn, finding_id, {
+        "status": status,
+        "disposition": disposition,
+        "reviewer": merged["reviewer"],
+        "assignee": merged["assignee"],
+        "note": merged["note"],
+        "follow_up_date": merged["follow_up_date"],
+        "reviewed_at": reviewed_at,
+        "updated_at": now,
+    }, scope)
+    insert_finding_review_event(conn, {
+        "tenant_id": scope.tenant_id if scope else existing["tenant_id"],
+        "workspace_id": scope.workspace_id if scope else existing["workspace_id"],
+        "finding_id": finding_id,
+        "status": status,
+        "disposition": disposition,
+        "reviewer": merged["reviewer"],
+        "assignee": merged["assignee"],
+        "note": merged["note"],
+        "follow_up_date": merged["follow_up_date"],
+        "created_at": now,
+    })
     conn.commit()
-    return get_finding(conn, finding_id)
+    return get_finding(conn, finding_id, scope)
 
 
-def generate_brief(conn, days=7, polish=False, now=None, openai_client=None, model=None):
+def generate_brief(conn, days=7, polish=False, now=None, openai_client=None, model=None, scope=None):
     now_dt = now or datetime.now(timezone.utc)
     window_end = now_dt.date().isoformat()
     window_start = (now_dt.date() - timedelta(days=days)).isoformat()
-    findings = list_findings(conn, active=True, limit=500)
+    findings = list_findings(conn, active=True, limit=500, scope=scope)
     recently_reviewed = [
-        _decode_finding(row) for row in conn.execute("""
-            SELECT * FROM findings
-            WHERE reviewed_at >= ? ORDER BY reviewed_at DESC
-        """, (f"{window_start}T00:00:00Z",)).fetchall()
+        _decode_finding(row)
+        for row in recently_reviewed_finding_rows(conn, f"{window_start}T00:00:00Z", scope)
     ]
-    drift_pairs = _load_drift_pairs(conn)
-    duplicate_candidates = _load_duplicate_candidates(conn)
-    orphaned_meeting_docs = _load_orphaned_meeting_docs(conn)
+    drift_pairs = _load_drift_pairs(conn, scope)
+    duplicate_candidates = _load_duplicate_candidates(conn, scope)
+    orphaned_meeting_docs = _load_orphaned_meeting_docs(conn, scope)
     deterministic = _build_brief_sections(
         findings, recently_reviewed, days, drift_pairs,
         duplicate_candidates, orphaned_meeting_docs,
@@ -342,60 +332,50 @@ def generate_brief(conn, days=7, polish=False, now=None, openai_client=None, mod
         polished = polish_brief(deterministic, openai_client=openai_client, model=used_model)
 
     brief_id = str(uuid.uuid4())
-    conn.execute("""
-        INSERT INTO briefs (
-            id, window_start, window_end, deterministic_json, polished_json, model, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
-        brief_id, window_start, window_end, json.dumps(deterministic),
-        json.dumps(polished) if polished else None, used_model if polished else None,
-        utc_now(),
-    ))
+    insert_brief(conn, {
+        "id": brief_id,
+        "tenant_id": scope.tenant_id if scope else None,
+        "workspace_id": scope.workspace_id if scope else None,
+        "window_start": window_start,
+        "window_end": window_end,
+        "deterministic_json": json.dumps(deterministic),
+        "polished_json": json.dumps(polished) if polished else None,
+        "model": used_model if polished else None,
+        "created_at": utc_now(),
+    })
     conn.commit()
-    return get_brief(conn, brief_id)
+    return get_brief(conn, brief_id, scope)
 
 
 def _claim(text, findings):
     return {"text": text, "evidence_ids": [finding["id"] for finding in findings]}
 
 
-def _load_drift_pairs(conn):
+def _load_drift_pairs(conn, scope=None):
     """Return the worst-aligned linked doc pairs, or [] if table doesn't exist yet."""
     try:
-        max_row = conn.execute("SELECT MAX(alignment_score) AS m FROM doc_alignment").fetchone()
-        if not max_row or not max_row["m"]:
+        max_score = max_alignment_score(conn, scope)
+        if not max_score:
             return []
-        threshold = max_row["m"] * 0.4
-        rows = conn.execute("""
-            SELECT da.src_id, da.dst_id, da.alignment_score, da.divergent_terms,
-                   s.title AS src_title, d.title AS dst_title,
-                   s.web_url AS src_url, d.web_url AS dst_url
-            FROM doc_alignment da
-            JOIN documents s ON s.id = da.src_id
-            JOIN documents d ON d.id = da.dst_id
-            WHERE da.alignment_score <= ?
-            ORDER BY da.alignment_score ASC
-            LIMIT 3
-        """, (threshold,)).fetchall()
-        return [dict(r) for r in rows]
+        return drift_pair_rows(conn, max_score * 0.4, scope)
     except Exception:
         return []
 
 
-def _load_duplicate_candidates(conn):
+def _load_duplicate_candidates(conn, scope=None):
     """Return likely duplicate or iteration doc pairs."""
     try:
         import ontology as _ontology
-        return _ontology.find_duplicate_candidates(conn)
+        return _ontology.find_duplicate_candidates(conn, scope=scope)
     except Exception:
         return []
 
 
-def _load_orphaned_meeting_docs(conn):
+def _load_orphaned_meeting_docs(conn, scope=None):
     """Return meeting-pattern docs with no inbound links."""
     try:
         import ontology as _ontology
-        return _ontology.find_orphaned_meeting_docs(conn)
+        return _ontology.find_orphaned_meeting_docs(conn, scope=scope)
     except Exception:
         return []
 
@@ -551,8 +531,8 @@ def _evidence_signature(brief):
         return None
 
 
-def get_brief(conn, brief_id):
-    row = conn.execute("SELECT * FROM briefs WHERE id=?", (brief_id,)).fetchone()
+def get_brief(conn, brief_id, scope=None):
+    row = brief_row(conn, brief_id, scope)
     if not row:
         return None
     result = dict(row)
@@ -562,6 +542,6 @@ def get_brief(conn, brief_id):
     return result
 
 
-def latest_brief(conn):
-    row = conn.execute("SELECT id FROM briefs ORDER BY created_at DESC LIMIT 1").fetchone()
-    return get_brief(conn, row["id"]) if row else None
+def latest_brief(conn, scope=None):
+    brief_id = latest_brief_id(conn, scope)
+    return get_brief(conn, brief_id, scope) if brief_id else None

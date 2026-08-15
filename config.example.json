@@ -10,6 +10,7 @@
   "openai_model": "gpt-5.4-mini",
   "_environment": {
     "OPENAI_API_KEY": "Optional. Enables Leader Brief polishing.",
+    "DRIVE_ANALYTICS_DATABASE_URL": "Optional. PostgreSQL connection URL for hosted-service mode; SQLite is used when unset.",
     "DRIVE_ANALYTICS_WRITE_TOKEN": "Optional for local use. When configured, required for FastAPI POST/PATCH endpoints.",
     "DRIVE_ANALYTICS_CORS_ORIGINS": "Comma-separated origins; defaults to * for local use."
   }

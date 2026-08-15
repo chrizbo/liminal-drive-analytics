@@ -5,7 +5,13 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
 from db import connect
-from graph import build_doc_graph, in_degree_rank, betweenness, communities
+from graph import build_doc_graph, in_degree_rank, communities
+from storage import (
+    activity_totals_by_doc,
+    count_rows,
+    document_title_rows,
+    external_link_summary_rows,
+)
 
 
 STALE_WINDOW_DAYS    = 30   # inactivity window — no/little activity in this period
@@ -24,36 +30,20 @@ def _today(now=None):
     return now
 
 
-def activity_by_doc(conn, days_recent=7, days_prior=7, now=None):
+def activity_by_doc(conn, days_recent=7, days_prior=7, now=None, scope=None):
     """Returns {doc_id: {recent: N, prior: N}} activity totals."""
     today = _today(now)
     recent_start = (today - timedelta(days=days_recent)).isoformat()
     prior_start = (today - timedelta(days=days_recent + days_prior)).isoformat()
     prior_end = recent_start
-
-    recent = {}
-    for row in conn.execute("""
-        SELECT document_id, SUM(views + edits + comments) as total
-        FROM activity_snapshots
-        WHERE date >= ?
-        GROUP BY document_id
-    """, (recent_start,)):
-        recent[row["document_id"]] = row["total"] or 0
-
-    prior = {}
-    for row in conn.execute("""
-        SELECT document_id, SUM(views + edits + comments) as total
-        FROM activity_snapshots
-        WHERE date >= ? AND date < ?
-        GROUP BY document_id
-    """, (prior_start, prior_end)):
-        prior[row["document_id"]] = row["total"] or 0
+    recent = activity_totals_by_doc(conn, recent_start, scope=scope)
+    prior = activity_totals_by_doc(conn, prior_start, end_date=prior_end, scope=scope)
 
     all_ids = set(recent) | set(prior)
     return {doc_id: {"recent": recent.get(doc_id, 0), "prior": prior.get(doc_id, 0)} for doc_id in all_ids}
 
 
-def stale_activity(conn, now=None):
+def stale_activity(conn, now=None, scope=None):
     """
     Returns {doc_id: {recent_30d: N, history_total: N, history_daily_avg: F}}
     Recent = last 30 days. History = prior 90 days before that.
@@ -61,22 +51,8 @@ def stale_activity(conn, now=None):
     today = _today(now)
     recent_start  = (today - timedelta(days=STALE_WINDOW_DAYS)).isoformat()
     history_start = (today - timedelta(days=STALE_WINDOW_DAYS + STALE_HISTORY_DAYS)).isoformat()
-
-    recent = {}
-    for row in conn.execute("""
-        SELECT document_id, SUM(views + edits + comments) as total
-        FROM activity_snapshots WHERE date >= ?
-        GROUP BY document_id
-    """, (recent_start,)):
-        recent[row["document_id"]] = row["total"] or 0
-
-    history = {}
-    for row in conn.execute("""
-        SELECT document_id, SUM(views + edits + comments) as total
-        FROM activity_snapshots WHERE date >= ? AND date < ?
-        GROUP BY document_id
-    """, (history_start, recent_start)):
-        history[row["document_id"]] = row["total"] or 0
+    recent = activity_totals_by_doc(conn, recent_start, scope=scope)
+    history = activity_totals_by_doc(conn, history_start, end_date=recent_start, scope=scope)
 
     all_ids = set(recent) | set(history)
     result = {}
@@ -90,8 +66,8 @@ def stale_activity(conn, now=None):
     return result
 
 
-def title_map(conn):
-    return {row["id"]: row["title"] for row in conn.execute("SELECT id, title FROM documents")}
+def title_map(conn, scope=None):
+    return {row["id"]: row["title"] for row in document_title_rows(conn, scope)}
 
 
 def rising_docs(activity, titles, top_n=10):
@@ -156,18 +132,10 @@ def external_link_summary(conn, by="category", top_n=20):
     by='domain' shows every domain individually."""
     summary = defaultdict(int)
     if by == "category":
-        col = "er.resource_type"
+        group_by = "category"
     else:
-        col = "er.domain"
-    for row in conn.execute(f"""
-        SELECT {col} as label, COUNT(*) as cnt
-        FROM external_links el
-        JOIN external_resources er ON el.resource_id = er.id
-        WHERE er.domain != '' AND er.domain != 'unknown'
-        GROUP BY label
-        ORDER BY cnt DESC
-        LIMIT {top_n}
-    """):
+        group_by = "domain"
+    for row in external_link_summary_rows(conn, by=group_by, top_n=top_n):
         summary[row["label"]] = row["cnt"]
     return summary
 
@@ -185,10 +153,10 @@ def run(top_n, recent_days, prior_days):
     G = build_doc_graph(conn)
     in_deg = in_degree_rank(G)
 
-    doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    link_count = conn.execute("SELECT COUNT(*) FROM doc_links").fetchone()[0]
-    ext_count = conn.execute("SELECT COUNT(*) FROM external_links").fetchone()[0]
-    activity_days = conn.execute("SELECT COUNT(DISTINCT date) FROM activity_snapshots").fetchone()[0]
+    doc_count = count_rows(conn, "documents")
+    link_count = count_rows(conn, "doc_links")
+    ext_count = count_rows(conn, "external_links")
+    activity_days = count_rows(conn, "activity_snapshots", distinct="date")
 
     print_section("Overview")
     print(f"  Documents indexed : {doc_count}")

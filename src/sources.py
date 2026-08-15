@@ -47,23 +47,49 @@ def resolve_shared_drive(drive_svc, value):
 def load_sources(path=SOURCES_PATH):
     try:
         with open(path) as source_file:
-            return json.load(source_file).get("shared_drives", [])
+            data = json.load(source_file)
+            return data.get("drive_sources") or data.get("shared_drives", [])
     except Exception:
         return []
 
 
-def register_shared_drive(drive_id, name, database_path=None, registry_path=SOURCES_PATH):
+def register_drive_source(source_id, name, kind="shared_drive", database_path=None, registry_path=SOURCES_PATH):
     sources = load_sources(registry_path)
     entry = {
-        "id": drive_id,
+        "id": source_id,
         "name": name,
-        "database_path": database_path or shared_drive_db_path(drive_id),
+        "kind": kind,
+        "database_path": database_path or shared_drive_db_path(source_id),
         "indexed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    sources = [source for source in sources if source.get("id") != drive_id]
+    sources = [source for source in sources if source.get("id") != source_id]
     sources.append(entry)
     sources.sort(key=lambda source: source.get("name", "").lower())
     os.makedirs(os.path.dirname(registry_path), exist_ok=True)
     with open(registry_path, "w") as source_file:
-        json.dump({"shared_drives": sources}, source_file, indent=2)
+        json.dump({"drive_sources": sources}, source_file, indent=2)
     return entry
+
+
+def register_shared_drive(drive_id, name, database_path=None, registry_path=SOURCES_PATH):
+    return register_drive_source(drive_id, name, "shared_drive", database_path, registry_path)
+
+
+def resolve_folder(drive_svc, value):
+    """Resolve a normal Drive folder URL/ID as a bounded crawl source."""
+    folder_id = extract_drive_item_id(value)
+    if not folder_id:
+        raise ValueError("Folder URL or ID is required")
+    item = drive_svc.files().get(
+        fileId=folder_id,
+        fields="id,name,mimeType,driveId",
+        supportsAllDrives=True,
+    ).execute()
+    if item.get("mimeType") != "application/vnd.google-apps.folder":
+        raise ValueError("The selected Drive item is not a folder")
+    return {
+        "id": item["id"],
+        "name": item["name"],
+        "kind": "folder",
+        "drive_id": item.get("driveId"),
+    }

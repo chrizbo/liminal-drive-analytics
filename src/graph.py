@@ -2,16 +2,17 @@
 
 import networkx as nx
 from db import connect
+from storage import graph_document_rows, graph_link_rows
 
 
-def build_doc_graph(conn):
+def build_doc_graph(conn, scope=None):
     """Directed graph of document → document links."""
     G = nx.DiGraph()
 
-    for row in conn.execute("SELECT id, title, mime_type, modified_at FROM documents"):
+    for row in graph_document_rows(conn, scope):
         G.add_node(row["id"], title=row["title"], mime_type=row["mime_type"], modified_at=row["modified_at"])
 
-    for row in conn.execute("SELECT src_id, dst_id FROM doc_links"):
+    for row in graph_link_rows(conn, scope):
         src, dst = row["src_id"], row["dst_id"]
         if G.has_node(src):  # only add edges where we've indexed both ends
             if not G.has_node(dst):

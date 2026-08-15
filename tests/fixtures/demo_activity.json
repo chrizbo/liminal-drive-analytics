@@ -179,10 +179,10 @@
     {"document_id": "1SY2q3ZaccBwuzDsDNnaSGY3C4PrwdXz_Dy43x2_hJ6E", "date": "2026-08-14", "views": 18, "edits": 4, "comments": 2},
     {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-06-01", "views": 20, "edits": 2, "comments": 3},
     {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-06-08", "views": 14, "edits": 1, "comments": 2},
-    {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-08-14", "views": 2, "edits": 1, "comments": 1},
+    {"document_id": "1yz48ZoiVB4k93in0PdQNWJkKicNLNn69dZrm8LqJXU0", "date": "2026-08-14", "views": 0, "edits": 0, "comments": 0},
     {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-05-15", "views": 18, "edits": 2, "comments": 2},
     {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-06-15", "views": 12, "edits": 1, "comments": 1},
-    {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-08-14", "views": 1, "edits": 1, "comments": 1}
+    {"document_id": "1m0WQGtiADSXli2WdO8xgHWxN--3Qc4k4c-izUFcZpgI", "date": "2026-08-14", "views": 0, "edits": 0, "comments": 0}
   ],
   "person_activity": [
     {"person_id": "person-maya", "document_id": "1n_dN06WZ3ZHSHzTNItDkt-Fl-tBjetfqajAAe6ttP2g", "action": "edit", "last_seen": "2026-08-14T15:00:24Z", "count": 8},

@@ -10,3 +10,4 @@ venv/
 .DS_Store
 lib/
 .pytest_cache/
+.claude/

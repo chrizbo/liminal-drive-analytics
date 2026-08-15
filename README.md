@@ -69,7 +69,6 @@ Terminology drift detection is inspired by the [Getting the Words Right](https:/
 ```
 drive-analytics/
 ├── README.md               # This file
-├── SPEC.md                 # Technical specification and data model
 ├── FUTURE_IDEAS.md         # Tabled ideas for later consideration
 ├── docs/
 │   ├── google-setup.md     # How to configure Google APIs and OAuth
@@ -111,6 +110,7 @@ Optional environment variables:
 
 ```bash
 export OPENAI_API_KEY=...                 # enables brief polishing
+export DRIVE_ANALYTICS_DATABASE_URL=...   # optional PostgreSQL URL; SQLite is used when unset
 export DRIVE_ANALYTICS_WRITE_TOKEN=...   # protects FastAPI POST/PATCH endpoints
 export DRIVE_ANALYTICS_CORS_ORIGINS=http://localhost:3000
 ```
@@ -156,10 +156,10 @@ When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it 
 ## Hosting
 
 - **Local** (default) — FastAPI serves the web app, API, and background indexer on your machine. Good for prototyping and personal Drive testing.
-- **Google Cloud** (production path) — Cloud Run for the web app, API, and indexer; Cloud Scheduler for periodic scans; Firestore or BigQuery for graph storage. Designed to migrate cleanly from local.
+- **Google Cloud** (production path) — Cloud Run for the web app, API, and indexer; Cloud Scheduler for periodic scans; Cloud SQL/PostgreSQL for tenant, workspace, graph, finding, and review state. BigQuery can be added later if historical analytics outgrow PostgreSQL.
 
-See [SPEC.md](SPEC.md) for the full technical plan.
+See [specs/README.md](specs/README.md) for the private beta plan, cloud architecture, and OAuth/security readiness checklist.
 
 ## Service Planning
 
-The next product direction is a hosted private beta for Google Workspace teams on Google Cloud. See [specs/README.md](specs/README.md) for the beta plan, cloud architecture, and OAuth/security readiness checklist.
+The next product direction is a hosted private beta for Google Workspace teams on Google Cloud. The current plan keeps the product app-focused; there is no public landing page yet.

@@ -1,12 +1,27 @@
 """Create a realistic fictional product-team dataset for dashboard demos."""
 
 import argparse
+import json
 import os
 from datetime import datetime, timezone, timedelta
 
 from db import DEMO_DB_PATH, connect, init
 from operations import generate_brief, list_findings, refresh_findings, update_review
 from ontology import index_doc_terms, refresh_ontology
+from storage import (
+    ensure_external_resource,
+    ensure_person,
+    upsert_activity_snapshot,
+    upsert_doc_link,
+    upsert_document,
+    upsert_external_link,
+    upsert_person_activity,
+)
+
+DEMO_ACTIVITY_FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "tests", "fixtures", "demo_activity.json",
+)
 
 
 DOC_MIME = "application/vnd.google-apps.document"
@@ -285,40 +300,34 @@ def reset_demo_database(path=DEMO_DB_PATH, now=None):
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for person_id, email, name in PEOPLE:
-        conn.execute(
-            "INSERT INTO persons (id, email, display_name) VALUES (?, ?, ?)",
-            (person_id, email, name),
-        )
+        ensure_person(conn, person_id, email=email, display_name=name)
 
     for doc_id, title, owner, mime, age_days in DOCUMENTS:
         created = now - timedelta(days=age_days)
         modified = now - timedelta(days=min(age_days, (age_days % 19) + 1))
-        conn.execute("""
-            INSERT INTO documents (
-                id, title, owner_email, mime_type, created_at, modified_at,
-                last_indexed_at, web_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            doc_id, title, owner, mime, created.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            modified.strftime("%Y-%m-%dT%H:%M:%SZ"), now_str,
-            f"https://example.com/northstar/docs/{doc_id}",
-        ))
+        upsert_document(conn, {
+            "id": doc_id,
+            "title": title,
+            "owner_email": owner,
+            "mime_type": mime,
+            "created_at": created.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "modified_at": modified.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "last_indexed_at": now_str,
+            "web_url": f"https://example.com/northstar/docs/{doc_id}",
+        })
 
     for src, dst in LINKS:
-        conn.execute(
-            "INSERT INTO doc_links (src_id, dst_id, first_seen, last_seen) VALUES (?, ?, ?, ?)",
-            (src, dst, now_str, now_str),
-        )
+        upsert_doc_link(conn, src, dst, now_str, now_str)
 
     for src, url, anchor, domain, resource_type in EXTERNALS:
-        conn.execute("""
-            INSERT INTO external_resources (id, url, domain, apex_domain, resource_type)
-            VALUES (?, ?, ?, ?, ?)
-        """, (url, url, domain, domain, resource_type))
-        conn.execute("""
-            INSERT INTO external_links (src_id, resource_id, anchor_text, first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?)
-        """, (src, url, anchor, now_str, now_str))
+        ensure_external_resource(conn, {
+            "id": url,
+            "url": url,
+            "domain": domain,
+            "apex_domain": domain,
+            "resource_type": resource_type,
+        })
+        upsert_external_link(conn, src, url, anchor, now_str, now_str)
 
     _seed_activity(conn, now)
     _seed_people_activity(conn, now_str)
@@ -346,6 +355,36 @@ def reset_demo_database(path=DEMO_DB_PATH, now=None):
     return path
 
 
+def apply_demo_activity_fixture(conn, fixture_path=DEMO_ACTIVITY_FIXTURE_PATH, scope=None):
+    """Overlay synthetic review-worthy activity onto the real demo Drive folder."""
+    with open(fixture_path) as fixture_file:
+        fixture = json.load(fixture_file)
+    now_str = fixture.get("generated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    for person in fixture.get("people", []):
+        ensure_person(
+            conn, person["id"],
+            email=person.get("email", ""),
+            display_name=person.get("display_name", ""),
+            scope=scope,
+        )
+    for link in fixture.get("links", []):
+        upsert_doc_link(conn, link["src_id"], link["dst_id"], now_str, now_str, scope)
+    for snapshot in fixture.get("activity_snapshots", []):
+        upsert_activity_snapshot(conn, snapshot["document_id"], snapshot["date"], {
+            "views": snapshot.get("views", 0),
+            "edits": snapshot.get("edits", 0),
+            "comments": snapshot.get("comments", 0),
+        }, scope)
+    for activity in fixture.get("person_activity", []):
+        upsert_person_activity(
+            conn, activity["person_id"], activity["document_id"], activity["action"],
+            activity.get("last_seen", now_str), activity.get("count", 1), scope,
+        )
+    conn.commit()
+    return fixture
+
+
 def _seed_activity(conn, now):
     patterns = {
         "launch-plan": ([2, 3, 2, 4, 3, 2, 3], [8, 10, 12, 15, 18, 20, 24]),
@@ -360,17 +399,19 @@ def _seed_activity(conn, now):
     for doc_id, (prior, recent) in patterns.items():
         for offset, total in enumerate(prior + recent):
             date = (now.date() - timedelta(days=13 - offset)).isoformat()
-            conn.execute("""
-                INSERT INTO activity_snapshots (document_id, date, views, edits, comments)
-                VALUES (?, ?, ?, ?, ?)
-            """, (doc_id, date, max(0, total - 2), 1 if total else 0, 1 if total > 4 else 0))
+            upsert_activity_snapshot(conn, doc_id, date, {
+                "views": max(0, total - 2),
+                "edits": 1 if total else 0,
+                "comments": 1 if total > 4 else 0,
+            })
 
     for offset in range(31, 121):
         date = (now.date() - timedelta(days=offset)).isoformat()
-        conn.execute("""
-            INSERT INTO activity_snapshots (document_id, date, views, edits, comments)
-            VALUES ('retro', ?, 3, 1, 0)
-        """, (date,))
+        upsert_activity_snapshot(conn, "retro", date, {
+            "views": 3,
+            "edits": 1,
+            "comments": 0,
+        })
 
 
 def _seed_people_activity(conn, now_str):
@@ -382,10 +423,7 @@ def _seed_people_activity(conn, now_str):
         ("person-elena", "gtm", 17), ("person-elena", "customer-brief", 12),
     ]
     for person_id, doc_id, count in assignments:
-        conn.execute("""
-            INSERT INTO person_activity (person_id, document_id, action, last_seen, count)
-            VALUES (?, ?, 'edit', ?, ?)
-        """, (person_id, doc_id, now_str, count))
+        upsert_person_activity(conn, person_id, doc_id, "edit", now_str, count)
 
 
 if __name__ == "__main__":

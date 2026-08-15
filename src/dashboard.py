@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db import DB_PATH, DEMO_DB_PATH, connect, init
 from demo_data import reset_demo_database
 from graph import build_doc_graph, in_degree_rank, communities
-from analytics import (activity_by_doc, stale_activity, title_map,
+from analytics import (activity_by_doc, stale_activity,
                        rising_docs, stale_docs,
                        STALE_WINDOW_DAYS, STALE_RECENT_MAX)
 from utils import doc_url, mime_icon
@@ -24,6 +24,18 @@ from operations import (
     latest_brief, list_findings, refresh_findings, update_review,
 )
 from sources import load_sources
+from storage import (
+    activity_history_rows,
+    count_rows,
+    document_dashboard_maps,
+    document_external_link_rows,
+    document_link_maps,
+    external_domain_rollups,
+    owner_count_rows,
+    person_activity_rows,
+    person_rows,
+    top_editor_rows,
+)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -124,15 +136,7 @@ def load_data(recent_days, prior_days, database_path):
     init(conn)
     refresh_findings(conn, recent_days=recent_days, prior_days=prior_days)
 
-    titles = title_map(conn)
-    mimes = {row["id"]: row["mime_type"] or "" for row in conn.execute(
-        "SELECT id, mime_type FROM documents"
-    )}
-    urls = {row["id"]: doc_url(row["id"], row["web_url"] or "", mimes.get(row["id"], ""))
-            for row in conn.execute("SELECT id, web_url FROM documents")}
-    modified = {row["id"]: row["modified_at"] or "" for row in conn.execute(
-        "SELECT id, modified_at FROM documents"
-    )}
+    titles, mimes, urls, modified = document_dashboard_maps(conn)
 
     activity  = activity_by_doc(conn, days_recent=recent_days, days_prior=prior_days)
     stale_act = stale_activity(conn)
@@ -144,82 +148,47 @@ def load_data(recent_days, prior_days, database_path):
         for node in cluster:
             community_map[node] = i
 
-    doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    link_count = conn.execute("SELECT COUNT(*) FROM doc_links").fetchone()[0]
-    ext_count  = conn.execute("SELECT COUNT(*) FROM external_links").fetchone()[0]
-    act_days   = conn.execute("SELECT COUNT(DISTINCT date) FROM activity_snapshots").fetchone()[0]
+    doc_count = count_rows(conn, "documents")
+    link_count = count_rows(conn, "doc_links")
+    ext_count = count_rows(conn, "external_links")
+    act_days = count_rows(conn, "activity_snapshots", distinct="date")
 
-    # Chart: grouped by apex_domain for clean rollups (substack.com not split across subdomains)
-    ext_by_apex = [
-        {"domain": r["apex_domain"] or r["domain"], "links": r["cnt"]}
-        for r in conn.execute("""
-            SELECT COALESCE(NULLIF(er.apex_domain,''), er.domain) as apex_domain,
-                   COUNT(*) as cnt
-            FROM external_links el
-            JOIN external_resources er ON el.resource_id = er.id
-            WHERE er.domain != '' AND er.domain != 'unknown'
-            GROUP BY apex_domain ORDER BY cnt DESC LIMIT 40
-        """)
-    ]
-    # Full table: individual subdomains for detail
-    ext_domains = [
-        {"domain": r["domain"], "apex": r["apex_domain"] or "", "links": r["cnt"]}
-        for r in conn.execute("""
-            SELECT er.domain, er.apex_domain, COUNT(*) as cnt
-            FROM external_links el
-            JOIN external_resources er ON el.resource_id = er.id
-            WHERE er.domain != '' AND er.domain != 'unknown'
-            GROUP BY er.domain ORDER BY cnt DESC LIMIT 100
-        """)
-    ]
+    ext_by_apex, ext_domains = external_domain_rollups(conn)
 
     # Activity time series for top 10 docs by recent activity
     top_ids = sorted(activity, key=lambda d: activity[d]["recent"], reverse=True)[:10]
     time_series = []
     for doc_id in top_ids:
-        for row in conn.execute("""
-            SELECT date, views + edits + comments as total
-            FROM activity_snapshots WHERE document_id = ? ORDER BY date
-        """, (doc_id,)):
+        for row in activity_history_rows(conn, doc_id):
             time_series.append({
                 "date": row["date"],
-                "activity": row["total"],
+                "activity": row["views"] + row["edits"] + row["comments"],
                 "doc": titles.get(doc_id, doc_id)[:40],
             })
 
     # Per-doc activity history for detail view
     all_activity_history = {}
-    for doc_id in titles:
-        rows = conn.execute("""
-            SELECT date, views, edits, comments
-            FROM activity_snapshots WHERE document_id = ? ORDER BY date
-        """, (doc_id,)).fetchall()
-        if rows:
-            all_activity_history[doc_id] = [dict(r) for r in rows]
+    for row in activity_history_rows(conn):
+        all_activity_history.setdefault(row["document_id"], []).append({
+            "date": row["date"],
+            "views": row["views"],
+            "edits": row["edits"],
+            "comments": row["comments"],
+        })
 
     # Inbound/outbound links per doc
-    inbound_links = {}
-    for row in conn.execute("SELECT dst_id, src_id FROM doc_links"):
-        inbound_links.setdefault(row["dst_id"], []).append(row["src_id"])
-
-    outbound_links = {}
-    for row in conn.execute("SELECT src_id, dst_id FROM doc_links"):
-        outbound_links.setdefault(row["src_id"], []).append(row["dst_id"])
+    inbound_links, outbound_links = document_link_maps(conn)
 
     # External links per doc
     doc_external = {}
-    for row in conn.execute("""
-        SELECT el.src_id, er.domain, er.url, el.anchor_text
-        FROM external_links el JOIN external_resources er ON el.resource_id = er.id
-        ORDER BY er.domain
-    """):
+    for row in document_external_link_rows(conn):
         doc_external.setdefault(row["src_id"], []).append({
             "domain": row["domain"], "url": row["url"], "anchor": row["anchor_text"]
         })
 
     # Resolved person names
     person_labels = {}
-    for row in conn.execute("SELECT id, display_name, email FROM persons"):
+    for row in person_rows(conn):
         name  = row["display_name"] or ""
         email = row["email"] or ""
         if name and email:
@@ -232,20 +201,11 @@ def load_data(recent_days, prior_days, database_path):
             person_labels[row["id"]] = row["id"]  # fallback to raw ID
 
     owner_by_email = {}
-    for row in conn.execute("SELECT owner_email, COUNT(*) as cnt FROM documents WHERE owner_email != '' GROUP BY owner_email ORDER BY cnt DESC"):
+    for row in owner_count_rows(conn):
         owner_by_email[row["owner_email"]] = row["cnt"]
 
     top_editors = []
-    for row in conn.execute("""
-        SELECT person_id,
-               COUNT(DISTINCT document_id) as doc_count,
-               SUM(count) as total_edits
-        FROM person_activity
-        WHERE action = 'edit'
-        GROUP BY person_id
-        ORDER BY total_edits DESC
-        LIMIT 20
-    """):
+    for row in top_editor_rows(conn, limit=20):
         top_editors.append({
             "Editor": person_labels.get(row["person_id"], row["person_id"]),
             "Docs edited": row["doc_count"],
@@ -254,11 +214,7 @@ def load_data(recent_days, prior_days, database_path):
 
     # Per-doc editors for detail view
     doc_editors = {}
-    for row in conn.execute("""
-        SELECT document_id, person_id, action, count, last_seen
-        FROM person_activity
-        ORDER BY count DESC
-    """):
+    for row in person_activity_rows(conn):
         doc_editors.setdefault(row["document_id"], []).append({
             "Person": person_labels.get(row["person_id"], row["person_id"]),
             "Action": row["action"],

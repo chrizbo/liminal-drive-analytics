@@ -1,5 +1,6 @@
 const state = {
   workspace: localStorage.getItem("liminal-workspace") || "demo",
+  storedWorkspace: localStorage.getItem("liminal-workspace") || "",
   route: location.hash.slice(1) || "overview",
   cache: new Map(),
   token: localStorage.getItem("liminal-admin-token") || "",
@@ -49,6 +50,12 @@ async function api(path, options = {}) {
   }
   return response.json();
 }
+function trackEvent(event_type, values = {}) {
+  api("/events", {
+    method: "POST",
+    body: JSON.stringify({ event_type, ...values }),
+  }).catch(() => {});
+}
 async function cached(path) {
   const key = `${state.workspace}:${path}`;
   if (!state.cache.has(key)) state.cache.set(key, api(path));
@@ -76,6 +83,21 @@ function docButton(doc) {
   return `<button data-doc="${esc(doc.id || doc.document_id)}">${esc(doc.title || doc.document_title || "Untitled")}</button>`;
 }
 function empty(message) { return `<div class="empty">${esc(message)}</div>`; }
+function compactDate(value) {
+  if (!value) return "Not yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function crawlStateMarkup(workspace) {
+  const health = workspace?.crawl_health || "unknown";
+  return `<div class="crawl-state">
+    <div><span>Health</span><strong>${esc(health.replaceAll("_", " "))}</strong></div>
+    <div><span>Last successful crawl</span><strong>${esc(compactDate(workspace?.last_successful_crawl_at || workspace?.indexed_at))}</strong></div>
+    <div><span>Last attempted crawl</span><strong>${esc(compactDate(workspace?.last_attempted_crawl_at))}</strong></div>
+    ${workspace?.failure_reason ? `<p>${esc(workspace.failure_reason)}</p>` : ""}
+  </div>`;
+}
 
 async function loadWorkspaces() {
   const [workspaces, configuration] = await Promise.all([
@@ -85,7 +107,12 @@ async function loadWorkspaces() {
   state.workspaces = workspaces;
   state.writeTokenRequired = configuration.write_token_required;
   state.configuration = configuration;
-  if (!workspaces.some(w => w.id === state.workspace)) state.workspace = workspaces[0].id;
+  const preferredWorkspace = workspaces.find(w => w.kind === "folder" && /demo/i.test(w.name));
+  if (!workspaces.some(w => w.id === state.workspace)) {
+    state.workspace = preferredWorkspace?.id || workspaces[0].id;
+  } else if (!state.storedWorkspace && preferredWorkspace) {
+    state.workspace = preferredWorkspace.id;
+  }
   const select = document.querySelector("#workspace");
   select.innerHTML = workspaces.map(w => `<option value="${esc(w.id)}">${w.kind === "shared" ? "Shared · " : ""}${esc(w.name)}</option>`).join("");
   select.value = state.workspace;
@@ -178,7 +205,14 @@ async function review(initialSignal = "") {
   const findings = await cached("/findings?limit=500");
   document.querySelector("#review-count").textContent = reviewCount(findings) || "";
   const allSignalTypes = ["stale_hub","rising","went_quiet","terminology_drift","duplicate_candidate","orphaned_meeting_doc"];
+  const countBySignal = {};
+  findings.forEach(f => { if (f.active) countBySignal[f.signal_type] = (countBySignal[f.signal_type] || 0) + 1; });
+  const chips = allSignalTypes
+    .filter(s => countBySignal[s])
+    .map(s => `<button class="signal-chip ${s}" data-signal="${esc(s)}"><span class="signal-chip-label">${esc(signalLabel(s))}</span><span class="signal-chip-count">${countBySignal[s]}</span></button>`)
+    .join("");
   app.innerHTML = `
+    ${chips ? `<div class="signal-breakdown audit-breakdown">${chips}</div>` : ""}
     <div class="filters">
       <input id="review-search" placeholder="Search findings">
       <select id="review-status"><option value="">All statuses</option>${["new","in_review","resolved","dismissed"].map(x => `<option>${x}</option>`).join("")}</select>
@@ -197,6 +231,12 @@ async function review(initialSignal = "") {
   document.querySelector("#review-search").oninput = filter;
   document.querySelector("#review-status").onchange = filter;
   document.querySelector("#review-signal").onchange = filter;
+  document.querySelectorAll("[data-signal]").forEach(button => {
+    button.onclick = () => {
+      document.querySelector("#review-signal").value = button.dataset.signal;
+      filter();
+    };
+  });
   filter();
 }
 function findingsMarkup(findings) {
@@ -232,7 +272,18 @@ async function external() {
 }
 
 async function settings() {
-  const workspace = selectedWorkspace();
+  let workspace = selectedWorkspace();
+  const context = await api("/context").catch(() => null);
+  if (context?.workspace) {
+    workspace = context.workspace;
+    state.workspaces = state.workspaces.map(item => item.id === workspace.id ? { ...item, ...workspace } : item);
+  }
+  const schedule = workspace?.kind === "demo"
+    ? { enabled: false, schedule_cron: "0 3 * * *", schedule_timezone: "UTC", crawl_mode: "incremental" }
+    : await api("/crawl-schedule").catch(() => ({ enabled: false, schedule_cron: "0 3 * * *", schedule_timezone: "UTC", crawl_mode: "incremental" }));
+  const connection = workspace?.kind === "demo"
+    ? { status: "demo", health: "demo", account_email: null }
+    : await api("/google-connection").catch(() => ({ status: "unknown", health: "unknown", account_email: null }));
   const job = workspace?.kind === "demo"
     ? { status: "idle" }
     : await api("/indexing/jobs/current").catch(() => ({ status: "idle" }));
@@ -241,9 +292,18 @@ async function settings() {
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
       <div class="settings-workspace"><span>Selected workspace</span><strong>${esc(workspace?.name || "")}</strong></div>
+      ${crawlStateMarkup(workspace)}
+      <div class="settings-workspace"><span>Google connection</span><strong>${esc(connection.account_email || connection.status || "Disconnected")}</strong></div>
       ${workspace?.kind === "demo"
         ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>`
-        : `<p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>`}
+        : `<p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
+          <form class="review-form schedule-form" id="schedule-form">
+            <label class="check-row"><input type="checkbox" name="enabled" ${schedule.enabled ? "checked" : ""}> Scheduled crawl</label>
+            <div class="form-row"><input name="schedule_cron" value="${esc(schedule.schedule_cron || "0 3 * * *")}"><input name="schedule_timezone" value="${esc(schedule.schedule_timezone || "UTC")}"></div>
+            <select name="crawl_mode">${["incremental","activity_refresh","link_expansion","backfill"].map(mode => `<option value="${mode}" ${mode === schedule.crawl_mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}</select>
+            <button class="button dark" type="submit">Save schedule</button>
+          </form>
+          <div class="danger-actions"><button class="button dark" data-disconnect-drive>Disconnect Drive</button><button class="button dark" data-delete-workspace-data>Delete indexed data</button></div>`}
     </article>
     <article class="card settings-card">
       <div class="card-header"><div><h2>Analysis settings</h2><p>Parameters used when classifying external resources and polishing briefs.</p></div></div>
@@ -269,6 +329,45 @@ async function settings() {
       settings();
     } catch (error) { toast(error.message); }
   };
+  const scheduleForm = document.querySelector("#schedule-form");
+  if (scheduleForm) scheduleForm.onsubmit = async event => {
+    event.preventDefault();
+    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to save schedule")) return;
+    const form = new FormData(event.target);
+    try {
+      await api("/crawl-schedule", {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: form.get("enabled") === "on",
+          schedule_cron: form.get("schedule_cron"),
+          schedule_timezone: form.get("schedule_timezone"),
+          crawl_mode: form.get("crawl_mode"),
+        }),
+      });
+      state.cache.clear();
+      toast("Schedule saved");
+      settings();
+    } catch (error) { toast(error.message); }
+  };
+  document.querySelector("[data-disconnect-drive]")?.addEventListener("click", async () => {
+    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to disconnect Drive")) return;
+    try {
+      await api("/google-connection/disconnect", { method: "POST", body: JSON.stringify({}) });
+      state.cache.clear();
+      toast("Drive disconnected");
+      settings();
+    } catch (error) { toast(error.message); }
+  });
+  document.querySelector("[data-delete-workspace-data]")?.addEventListener("click", async () => {
+    if (!confirm("Delete indexed data for this workspace? Google Drive access is not changed.")) return;
+    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to delete indexed data")) return;
+    try {
+      await api("/workspace-data", { method: "DELETE" });
+      state.cache.clear();
+      toast("Indexed data deleted");
+      settings();
+    } catch (error) { toast(error.message); }
+  });
 }
 
 async function graph() {
@@ -473,13 +572,18 @@ async function openFinding(id) {
   const isDemo = state.workspace === "demo";
   const f = await api(`/findings/${encodeURIComponent(id)}`);
   const docId = f.document_id;
+  trackEvent("finding_opened", {
+    finding_id: id,
+    document_id: docId,
+    metadata: { route: "doc_audit", signal_type: f.signal_type },
+  });
   const [doc, alignment] = await Promise.all([
     api(`/documents/${encodeURIComponent(docId)}`),
     isDemo ? api(`/ontology/alignment/${encodeURIComponent(docId)}`).catch(() => []) : Promise.resolve([]),
   ]);
   const level = urgency(f.score);
   drawerContent.innerHTML = `<p class="eyebrow">Operational finding</p><h2 class="drawer-title">${esc(f.evidence.document_title)}</h2>
-    <div class="finding-header-meta">${badge(level.label)} ${badge(signalLabel(f.signal_type))} ${badge(f.status)} <span class="muted finding-signal">${esc(f.evidence.signal)}</span>${f.evidence.document_url ? `<a class="finding-ext-link" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer">Open doc ↗</a>` : ""}</div>
+    <div class="finding-header-meta">${badge(level.label)} ${badge(signalLabel(f.signal_type))} ${badge(f.status)} <span class="muted finding-signal">${esc(f.evidence.signal)}</span>${f.evidence.document_url ? `<a class="finding-ext-link" href="${esc(f.evidence.document_url)}" target="_blank" rel="noreferrer" data-track-doc-click data-finding-id="${esc(id)}" data-document-id="${esc(docId)}">Open doc ↗</a>` : ""}</div>
     <section class="detail-section"><h3>Suggested action</h3><p>${esc(f.suggested_action)}</p></section>
     <section class="detail-section"><h3>Review</h3><form class="review-form" id="review-form">
       <div class="form-row"><select name="status">${["new","in_review","resolved","dismissed"].map(x => `<option ${x === f.status ? "selected" : ""}>${x}</option>`)}</select><select name="disposition"><option value="">No disposition</option>${["current_no_action","update_needed","deprecate","superseded","false_positive","monitor"].map(x => `<option ${x === f.disposition ? "selected" : ""}>${x}</option>`)}</select></div>
@@ -611,6 +715,14 @@ drawer.addEventListener("click", event => {
   if (!inside) drawer.close();
 });
 document.addEventListener("click", event => {
+  const trackedDocClick = event.target.closest("[data-track-doc-click]");
+  if (trackedDocClick) {
+    trackEvent("doc_opened", {
+      finding_id: trackedDocClick.dataset.findingId,
+      document_id: trackedDocClick.dataset.documentId,
+      metadata: { route: "finding_detail" },
+    });
+  }
   if (event.target.closest("[data-external]")) return;
   const doc = event.target.closest("[data-doc]"); const finding = event.target.closest("[data-finding]");
   if (doc) openDocument(doc.dataset.doc);

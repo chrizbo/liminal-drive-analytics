@@ -7,8 +7,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from indexer import drive_list_args
 from sources import (
-    extract_drive_item_id, load_sources, register_shared_drive,
-    resolve_shared_drive, shared_drive_db_path,
+    extract_drive_item_id, load_sources, register_drive_source,
+    register_shared_drive, resolve_folder, resolve_shared_drive,
+    shared_drive_db_path,
 )
 
 
@@ -31,6 +32,12 @@ def test_personal_drive_list_args_do_not_add_shared_drive_scope():
     assert "corpora" not in args
 
 
+def test_folder_list_args_do_not_add_shared_drive_scope_for_personal_folder():
+    args = drive_list_args("trashed=false", source={"id": "folder-1", "kind": "folder"})
+    assert "driveId" not in args
+    assert "corpora" not in args
+
+
 def test_register_shared_drive_is_idempotent(tmp_path):
     registry = str(tmp_path / "sources.json")
     database = str(tmp_path / "shared.db")
@@ -39,6 +46,20 @@ def test_register_shared_drive_is_idempotent(tmp_path):
     sources = load_sources(registry)
     assert len(sources) == 1
     assert sources[0]["name"] == "Product Team"
+
+
+def test_register_drive_source_records_folder_kind(tmp_path):
+    registry = str(tmp_path / "sources.json")
+    database = str(tmp_path / "folder.db")
+    register_drive_source("folder-1", "Demo", "folder", database, registry)
+    sources = load_sources(registry)
+    assert sources == [{
+        "id": "folder-1",
+        "name": "Demo",
+        "kind": "folder",
+        "database_path": database,
+        "indexed_at": sources[0]["indexed_at"],
+    }]
 
 
 class Executable:
@@ -92,3 +113,20 @@ def test_resolve_folder_inside_shared_drive():
         {"folder-1": {"id": "folder-1", "name": "Launch", "driveId": "drive-1"}},
     )
     assert resolve_shared_drive(service, "folder-1") == {"id": "drive-1", "name": "Product"}
+
+
+def test_resolve_folder_source():
+    service = FakeDriveService(
+        {},
+        {"folder-1": {
+            "id": "folder-1",
+            "name": "Demo",
+            "mimeType": "application/vnd.google-apps.folder",
+        }},
+    )
+    assert resolve_folder(service, "folder-1") == {
+        "id": "folder-1",
+        "name": "Demo",
+        "kind": "folder",
+        "drive_id": None,
+    }

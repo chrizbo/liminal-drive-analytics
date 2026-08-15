@@ -8,6 +8,11 @@ import json
 import re
 from datetime import datetime, timezone
 
+from storage import (
+    delete_doc_terms, doc_link_pairs, doc_term_frequencies, document_title_rows,
+    inbound_link_counts, top_doc_terms, upsert_doc_alignment, upsert_doc_term,
+)
+
 
 STOPWORDS = {
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -88,7 +93,7 @@ def extract_terms(text: str) -> list[tuple[str, str]]:
     return [(term, ttype) for term, ttype, _ in results]
 
 
-def index_doc_terms(conn, doc_id: str, text: str) -> None:
+def index_doc_terms(conn, doc_id: str, text: str, scope=None) -> None:
     """Extract terms from text and store in doc_terms table."""
     tokens = _tokenize(text)
     filtered = [t for t in tokens if t not in STOPWORDS and not t.isdigit()]
@@ -103,31 +108,24 @@ def index_doc_terms(conn, doc_id: str, text: str) -> None:
         trigram = f"{filtered[i]} {filtered[i+1]} {filtered[i+2]}"
         freq[trigram] = freq.get(trigram, 0) + 1
 
-    conn.execute("DELETE FROM doc_terms WHERE doc_id = ?", (doc_id,))
+    delete_doc_terms(conn, doc_id, scope)
     for term, count in freq.items():
         words = term.split()
         if (len(words) == 1 and count >= 1) or (len(words) > 1 and count >= 2):
             ttype = _classify_term(term)
-            conn.execute(
-                "INSERT OR REPLACE INTO doc_terms (doc_id, term, frequency, term_type) VALUES (?,?,?,?)",
-                (doc_id, term, count, ttype),
-            )
+            upsert_doc_term(conn, doc_id, term, count, ttype, scope)
     conn.commit()
 
 
-def _term_set(conn, doc_id: str, top_n: int = 30) -> set[str]:
+def _term_set(conn, doc_id: str, top_n: int = 30, scope=None) -> set[str]:
     """Return the top-N most frequent terms for a doc (focuses Jaccard on key concepts)."""
-    rows = conn.execute(
-        "SELECT term FROM doc_terms WHERE doc_id = ? ORDER BY frequency DESC LIMIT ?",
-        (doc_id, top_n),
-    ).fetchall()
-    return {r["term"] for r in rows}
+    return top_doc_terms(conn, doc_id, top_n, scope)
 
 
-def compute_alignment(conn, src_id: str, dst_id: str) -> dict:
+def compute_alignment(conn, src_id: str, dst_id: str, scope=None) -> dict:
     """Compute Jaccard alignment between two docs. Returns score and term lists."""
-    src_terms = _term_set(conn, src_id)
-    dst_terms = _term_set(conn, dst_id)
+    src_terms = _term_set(conn, src_id, scope=scope)
+    dst_terms = _term_set(conn, dst_id, scope=scope)
 
     if not src_terms or not dst_terms:
         return {
@@ -142,10 +140,7 @@ def compute_alignment(conn, src_id: str, dst_id: str) -> dict:
 
     # Divergent = terms in src not in dst, sorted by frequency descending
     divergent_raw = src_terms - dst_terms
-    freq_rows = conn.execute(
-        f"SELECT term, frequency FROM doc_terms WHERE doc_id = ? AND term IN ({','.join('?'*len(divergent_raw))})",
-        (src_id, *divergent_raw),
-    ).fetchall() if divergent_raw else []
+    freq_rows = doc_term_frequencies(conn, src_id, divergent_raw, scope)
     divergent = [r["term"] for r in sorted(freq_rows, key=lambda r: r["frequency"], reverse=True)][:20]
 
     return {
@@ -162,7 +157,7 @@ def _title_similarity(a: str, b: str) -> float:
 
 
 def find_duplicate_candidates(conn, top_n: int = 30, jaccard_threshold: float = 0.55,
-                               title_threshold: float = 0.6) -> list[dict]:
+                               title_threshold: float = 0.6, scope=None) -> list[dict]:
     """Return doc pairs that look like duplicates or iterations.
 
     Two signals trigger a match:
@@ -171,14 +166,14 @@ def find_duplicate_candidates(conn, top_n: int = 30, jaccard_threshold: float = 
     Pairs that already directly link each other are excluded (they're intentionally related).
     """
     try:
-        docs = conn.execute("SELECT id, title FROM documents").fetchall()
+        docs = document_title_rows(conn, scope)
         linked_pairs = {
-            (r["src_id"], r["dst_id"])
-            for r in conn.execute("SELECT src_id, dst_id FROM doc_links").fetchall()
+            (row["src_id"], row["dst_id"])
+            for row in doc_link_pairs(conn, scope)
         }
 
         results = []
-        doc_list = [dict(r) for r in docs]
+        doc_list = [dict(row) for row in docs]
         seen = set()
 
         for i, a in enumerate(doc_list):
@@ -196,8 +191,8 @@ def find_duplicate_candidates(conn, top_n: int = 30, jaccard_threshold: float = 
                 term_sim = None
 
                 if not directly_linked:
-                    a_terms = _term_set(conn, a["id"], top_n)
-                    b_terms = _term_set(conn, b["id"], top_n)
+                    a_terms = _term_set(conn, a["id"], top_n, scope)
+                    b_terms = _term_set(conn, b["id"], top_n, scope)
                     if a_terms and b_terms:
                         union = a_terms | b_terms
                         term_sim = len(a_terms & b_terms) / len(union) if union else 0.0
@@ -222,7 +217,7 @@ def find_duplicate_candidates(conn, top_n: int = 30, jaccard_threshold: float = 
         return []
 
 
-def find_orphaned_meeting_docs(conn, max_inbound: int = 0) -> list[dict]:
+def find_orphaned_meeting_docs(conn, max_inbound: int = 0, scope=None) -> list[dict]:
     """Return docs that look like meeting notes with no inbound links.
 
     Detection: title contains a meeting keyword AND inbound link count <= max_inbound.
@@ -235,13 +230,8 @@ def find_orphaned_meeting_docs(conn, max_inbound: int = 0) -> list[dict]:
         "followup", "agenda", "minutes", "offsite", "sprint review",
     }
     try:
-        docs = conn.execute("SELECT id, title FROM documents").fetchall()
-        in_deg = {
-            r["doc_id"]: r["cnt"]
-            for r in conn.execute(
-                "SELECT dst_id AS doc_id, COUNT(*) AS cnt FROM doc_links GROUP BY dst_id"
-            ).fetchall()
-        }
+        docs = document_title_rows(conn, scope)
+        in_deg = inbound_link_counts(conn, scope)
         results = []
         for doc in docs:
             title_lower = doc["title"].lower()
@@ -258,25 +248,21 @@ def find_orphaned_meeting_docs(conn, max_inbound: int = 0) -> list[dict]:
         return []
 
 
-def refresh_ontology(conn) -> None:
+def refresh_ontology(conn, scope=None) -> None:
     """Recompute doc_alignment for all linked doc pairs that have term data."""
-    pairs = conn.execute("SELECT DISTINCT src_id, dst_id FROM doc_links").fetchall()
+    pairs = doc_link_pairs(conn, scope)
     now = datetime.now(timezone.utc).isoformat()
     for row in pairs:
         src_id, dst_id = row["src_id"], row["dst_id"]
-        result = compute_alignment(conn, src_id, dst_id)
+        result = compute_alignment(conn, src_id, dst_id, scope)
         if result["alignment_score"] is None:
             continue
-        conn.execute(
-            """INSERT OR REPLACE INTO doc_alignment
-               (src_id, dst_id, alignment_score, shared_terms, divergent_terms, computed_at)
-               VALUES (?,?,?,?,?,?)""",
-            (
-                src_id, dst_id,
-                result["alignment_score"],
-                json.dumps(result["shared_terms"]),
-                json.dumps(result["divergent_terms"]),
-                now,
-            ),
-        )
+        upsert_doc_alignment(conn, {
+            "src_id": src_id,
+            "dst_id": dst_id,
+            "alignment_score": result["alignment_score"],
+            "shared_terms": json.dumps(result["shared_terms"]),
+            "divergent_terms": json.dumps(result["divergent_terms"]),
+            "computed_at": now,
+        }, scope)
     conn.commit()

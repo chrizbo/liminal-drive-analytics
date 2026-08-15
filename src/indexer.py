@@ -16,8 +16,20 @@ warnings.filterwarnings("ignore")
 from tqdm import tqdm
 from auth import get_credentials, build_services
 from db import connect, init
+from demo_data import apply_demo_activity_fixture
 from operations import refresh_findings
-from sources import register_shared_drive, resolve_shared_drive, shared_drive_db_path
+from sources import (
+    register_drive_source, register_shared_drive, resolve_folder,
+    resolve_shared_drive, shared_drive_db_path,
+)
+from storage import (
+    ensure_external_resource, ensure_person, external_resource_rows,
+    increment_person_activity, linked_unindexed_doc_ids,
+    unresolved_person_ids,
+    update_external_resource_classification, update_person_identity,
+    upsert_activity_snapshot, upsert_doc_link, upsert_document,
+    upsert_external_link,
+)
 
 
 def _handle_interrupt(sig, frame):
@@ -25,6 +37,7 @@ def _handle_interrupt(sig, frame):
     sys.exit(0)
 
 DRIVE_FILE_RE = re.compile(r"https://(?:docs|drive|slides|sheets)\.google\.com/.+?/d/([a-zA-Z0-9_-]+)")
+DEMO_ACTIVITY_FOLDER_ID = "1DZJck2R33aEUkioWk7NSnh10NQhMa8eU"
 
 def truncate(s, n=40):
     return s[:n-3] + "..." if len(s) > n else s
@@ -295,7 +308,7 @@ def fetch_activity(activity_svc, file_id):
     return snapshots, person_actions
 
 
-def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose):
+def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose, scope=None):
     file_id = file_meta["id"]
     mime = file_meta.get("mimeType", "")
     title = file_meta.get("name", "")
@@ -307,14 +320,16 @@ def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, n
     if verbose:
         print(f"  Indexing: {title}")
 
-    # Upsert document node
-    conn.execute("""
-        INSERT INTO documents (id, title, owner_email, mime_type, created_at, modified_at, last_indexed_at, web_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            title=excluded.title, modified_at=excluded.modified_at,
-            last_indexed_at=excluded.last_indexed_at, web_url=excluded.web_url
-    """, (file_id, title, owner, mime, created, modified, now_str, web_url))
+    upsert_document(conn, {
+        "id": file_id,
+        "title": title,
+        "owner_email": owner,
+        "mime_type": mime,
+        "created_at": created,
+        "modified_at": modified,
+        "last_indexed_at": now_str,
+        "web_url": web_url,
+    }, scope)
 
     # Extract links
     links = []
@@ -331,46 +346,30 @@ def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, n
     for url, anchor in links:
         kind, target = resolve_link(url, file_id)
         if kind == "internal":
-            conn.execute("""
-                INSERT INTO doc_links (src_id, dst_id, first_seen, last_seen)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(src_id, dst_id) DO UPDATE SET last_seen=excluded.last_seen
-            """, (file_id, target, now_str, now_str))
+            upsert_doc_link(conn, file_id, target, now_str, now_str, scope)
         elif kind == "external" and target:
             domain, apex, rtype = classify_domain(target)
             resource_id = target
-            conn.execute("""
-                INSERT INTO external_resources (id, url, domain, apex_domain, resource_type)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO NOTHING
-            """, (resource_id, target, domain, apex, rtype))
-            conn.execute("""
-                INSERT INTO external_links (src_id, resource_id, anchor_text, first_seen, last_seen)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(src_id, resource_id) DO UPDATE SET last_seen=excluded.last_seen
-            """, (file_id, resource_id, anchor[:200] if anchor else "", now_str, now_str))
+            ensure_external_resource(conn, {
+                "id": resource_id,
+                "url": target,
+                "domain": domain,
+                "apex_domain": apex,
+                "resource_type": rtype,
+            }, scope)
+            upsert_external_link(
+                conn, file_id, resource_id, anchor[:200] if anchor else "",
+                now_str, now_str, scope,
+            )
 
     # Fetch activity
     try:
         snapshots, person_actions = fetch_activity(activity_svc, file_id)
         for date, counts in snapshots.items():
-            conn.execute("""
-                INSERT INTO activity_snapshots (document_id, date, views, edits, comments)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(document_id, date) DO UPDATE SET
-                    views=excluded.views, edits=excluded.edits, comments=excluded.comments
-            """, (file_id, date, counts["views"], counts["edits"], counts["comments"]))
+            upsert_activity_snapshot(conn, file_id, date, counts, scope)
         for person_id, action, ts in person_actions:
-            conn.execute("""
-                INSERT INTO persons (id, email, display_name) VALUES (?, ?, ?)
-                ON CONFLICT(id) DO NOTHING
-            """, (person_id, "", person_id))
-            conn.execute("""
-                INSERT INTO person_activity (person_id, document_id, action, last_seen, count)
-                VALUES (?, ?, ?, ?, 1)
-                ON CONFLICT(person_id, document_id, action) DO UPDATE SET
-                    count=count+1, last_seen=MAX(last_seen, excluded.last_seen)
-            """, (person_id, file_id, action, ts[:19] if ts else ""))
+            ensure_person(conn, person_id, display_name=person_id, scope=scope)
+            increment_person_activity(conn, person_id, file_id, action, ts[:19] if ts else "", scope)
     except Exception as e:
         print(f"    Warning: could not fetch activity for {title}: {e}")
 
@@ -381,7 +380,7 @@ def fetch_file_meta(drive_svc, file_id):
     try:
         return drive_svc.files().get(
             fileId=file_id,
-            fields="id, name, mimeType, createdTime, modifiedTime, owners, webViewLink, driveId",
+            fields="id, name, mimeType, createdTime, modifiedTime, owners, webViewLink, driveId, parents",
             supportsAllDrives=True,
         ).execute()
     except Exception:
@@ -394,28 +393,31 @@ def drive_list_args(query, page_token=None, source=None):
         "pageSize": 100,
         "fields": (
             "nextPageToken, files(id, name, mimeType, createdTime, modifiedTime, "
-            "owners, webViewLink, driveId)"
+            "owners, webViewLink, driveId, parents)"
         ),
         "pageToken": page_token,
     }
-    if source:
+    if source and source.get("kind") != "folder":
         args.update({
             "corpora": "drive",
             "driveId": source["id"],
             "includeItemsFromAllDrives": True,
             "supportsAllDrives": True,
         })
+    elif source and source.get("drive_id"):
+        args.update({
+            "corpora": "drive",
+            "driveId": source["drive_id"],
+            "includeItemsFromAllDrives": True,
+            "supportsAllDrives": True,
+        })
     return args
 
 
-def resolve_people(people_svc, conn, verbose=False, progress=None):
+def resolve_people(people_svc, conn, verbose=False, progress=None, scope=None):
     """Resolve people/XXXXX resource names → display name + email using People API.
     Only fetches records where email is still blank. Batches in groups of 50."""
-    unresolved = [
-        row["id"] for row in conn.execute(
-            "SELECT id FROM persons WHERE email = '' OR email IS NULL"
-        )
-    ]
+    unresolved = unresolved_person_ids(conn, scope)
     if not unresolved:
         print("All persons already resolved.")
         if progress:
@@ -451,10 +453,7 @@ def resolve_people(people_svc, conn, verbose=False, progress=None):
                 display_name = names[0].get("displayName", "") if names else ""
                 email = emails[0].get("value", "") if emails else ""
                 if display_name or email:
-                    conn.execute(
-                        "UPDATE persons SET display_name=?, email=? WHERE id=?",
-                        (display_name, email, resource_name)
-                    )
+                    update_person_identity(conn, resource_name, display_name, email, scope)
                     if verbose:
                         tqdm.write(f"  {resource_name} → {display_name} <{email}>")
                     resolved += 1
@@ -468,7 +467,10 @@ def resolve_people(people_svc, conn, verbose=False, progress=None):
     print(f"Resolved {resolved} of {len(unresolved)} person IDs.")
 
 
-def run(days, verbose, expand=False, shared_drive=None, progress=None):
+def run(
+    days, verbose, expand=False, shared_drive=None, folder=None,
+    progress=None, conn=None, scope=None, database_path=None,
+):
     def report(phase, message, current=None, total=None, **extra):
         if progress:
             progress({
@@ -479,9 +481,16 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
     creds = get_credentials()
     drive_svc, docs_svc, slides_svc, activity_svc, people_svc = build_services(creds)
     report("authenticating", "Connected to Google Drive")
-    source = resolve_shared_drive(drive_svc, shared_drive) if shared_drive else None
-    database_path = shared_drive_db_path(source["id"]) if source else None
-    conn = connect(database_path)
+    source = None
+    if shared_drive:
+        source = resolve_shared_drive(drive_svc, shared_drive)
+        source["kind"] = "shared_drive"
+    elif folder:
+        source = resolve_folder(drive_svc, folder)
+    if database_path is None:
+        database_path = shared_drive_db_path(source["id"]) if source else None
+    owns_connection = conn is None
+    conn = conn or connect(database_path)
     init(conn)
 
     since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -492,8 +501,13 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
         "mimeType='application/vnd.google-apps.presentation'"
     )
     query = f"({mime_filter}) and modifiedTime > '{since}' and trashed=false"
+    if source and source.get("kind") == "folder":
+        query = f"'{source['id']}' in parents and {query}"
 
-    source_label = f"Shared Drive '{source['name']}'" if source else "Drive"
+    source_label = (
+        f"{'Folder' if source.get('kind') == 'folder' else 'Shared Drive'} '{source['name']}'"
+        if source else "Drive"
+    )
     print(f"Fetching files from {source_label} modified in the last {days} days...")
     report("fetching", f"Fetching files from {source_label}")
     files = []
@@ -516,7 +530,7 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
                 "indexing", f"Indexing {f.get('name', 'Untitled')}",
                 current=index - 1, total=len(files), document_title=f.get("name", ""),
             )
-            index_file(f, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
+            index_file(f, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose, scope)
             report(
                 "indexing", f"Indexed {f.get('name', 'Untitled')}",
                 current=index, total=len(files), document_title=f.get("name", ""),
@@ -524,13 +538,7 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
 
     if expand:
         # Follow doc→doc links to index referenced docs not in the date window
-        unindexed = [
-            row["dst_id"] for row in conn.execute("""
-                SELECT DISTINCT dl.dst_id FROM doc_links dl
-                LEFT JOIN documents d ON dl.dst_id = d.id
-                WHERE d.id IS NULL
-            """)
-        ]
+        unindexed = linked_unindexed_doc_ids(conn, scope)
         if unindexed:
             print(f"\nExpanding: found {len(unindexed)} linked-but-unindexed docs. Fetching...")
             report("expanding", f"Expanding {len(unindexed)} linked documents", current=0, total=len(unindexed))
@@ -540,7 +548,10 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
                     if not meta:
                         report("expanding", "Skipped unavailable linked document", current=index, total=len(unindexed))
                         continue
-                    if source and meta.get("driveId") != source["id"]:
+                    if source and source.get("kind") == "shared_drive" and meta.get("driveId") != source["id"]:
+                        report("expanding", "Skipped linked document outside workspace", current=index, total=len(unindexed))
+                        continue
+                    if source and source.get("kind") == "folder" and source["id"] not in (meta.get("parents") or []):
                         report("expanding", "Skipped linked document outside workspace", current=index, total=len(unindexed))
                         continue
                     mime = meta.get("mimeType", "")
@@ -548,7 +559,7 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
                         report("expanding", "Skipped unsupported linked document", current=index, total=len(unindexed))
                         continue
                     bar.set_postfix_str(truncate(meta.get("name", "")), refresh=True)
-                    index_file(meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose)
+                    index_file(meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, now_str, verbose, scope)
                     report(
                         "expanding", f"Indexed linked document {meta.get('name', 'Untitled')}",
                         current=index, total=len(unindexed), document_title=meta.get("name", ""),
@@ -557,16 +568,24 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
             print("\nNo unindexed linked docs found.")
             report("expanding", "No linked documents need indexing", current=0, total=0)
 
-    resolve_people(people_svc, conn, verbose, progress)
+    if source and source.get("kind") == "folder" and source["id"] == DEMO_ACTIVITY_FOLDER_ID:
+        report("fixtures", "Applying demo activity fixture")
+        apply_demo_activity_fixture(conn, scope=scope)
+
+    resolve_people(people_svc, conn, verbose, progress, scope)
     report("findings", "Refreshing operational findings")
-    result = refresh_findings(conn)
+    result = refresh_findings(conn, scope=scope)
     print(
         f"Operational findings: {result['created']} created, "
         f"{result['updated']} updated, {result['deactivated']} deactivated."
     )
-    conn.close()
+    if owns_connection:
+        conn.close()
     if source:
-        register_shared_drive(source["id"], source["name"], database_path)
+        if source.get("kind") == "folder":
+            register_drive_source(source["id"], source["name"], "folder", database_path)
+        else:
+            register_shared_drive(source["id"], source["name"], database_path)
     print(f"\nDone. {database_path or 'data/graph.db'} is up to date.")
     report(
         "complete", f"{source_label} is up to date",
@@ -580,17 +599,14 @@ def run(days, verbose, expand=False, shared_drive=None, progress=None):
     }
 
 
-def reclassify(verbose=False):
+def reclassify(verbose=False, scope=None):
     """Re-run domain classification over all existing external_resources."""
     conn = connect()
-    rows = list(conn.execute("SELECT id, url FROM external_resources"))
+    rows = list(external_resource_rows(conn, scope))
     updated = 0
     for row in rows:
         domain, apex, rtype = classify_domain(row["url"])
-        conn.execute(
-            "UPDATE external_resources SET domain=?, apex_domain=?, resource_type=? WHERE id=?",
-            (domain, apex, rtype, row["id"])
-        )
+        update_external_resource_classification(conn, row["id"], domain, apex, rtype, scope)
         if verbose and rtype != "external":
             print(f"  {rtype:<20} {domain}")
         updated += 1
@@ -611,6 +627,10 @@ if __name__ == "__main__":
         "--shared-drive",
         help="Shared Drive root URL/ID, or a folder URL/ID inside a Shared Drive",
     )
+    parser.add_argument(
+        "--folder",
+        help="Drive folder URL/ID to index as a bounded workspace",
+    )
     args = parser.parse_args()
     if args.reclassify:
         reclassify(args.verbose)
@@ -622,4 +642,4 @@ if __name__ == "__main__":
         resolve_people(people_svc, conn, args.verbose)
         conn.close()
     else:
-        run(args.days, args.verbose, args.expand, args.shared_drive)
+        run(args.days, args.verbose, args.expand, args.shared_drive, args.folder)
