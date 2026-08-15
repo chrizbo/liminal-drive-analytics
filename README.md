@@ -158,7 +158,7 @@ When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it 
 - **Local** (default) — FastAPI serves the web app, API, and background indexer on your machine. Good for prototyping and personal Drive testing.
 - **Google Cloud** (production path) — Cloud Run for the web app, API, and indexer; Cloud Scheduler for periodic scans; Cloud SQL/PostgreSQL for tenant, workspace, graph, finding, and review state. BigQuery can be added later if historical analytics outgrow PostgreSQL.
 
-See [specs/README.md](specs/README.md) for the private beta plan, cloud architecture, and OAuth/security readiness checklist.
+See [specs/README.md](specs/README.md) for the private beta plan, cloud architecture, and OAuth/security readiness checklist. The current Google Cloud project state is tracked in [docs/hosted-google-cloud-setup.md](docs/hosted-google-cloud-setup.md).
 
 ## Service Planning
 
