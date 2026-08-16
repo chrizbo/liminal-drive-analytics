@@ -56,9 +56,9 @@ Created:
   - service: `liminal-api`
   - URL: `https://liminal-api-bkcwct2l6a-uc.a.run.app`
   - alternate URL: `https://liminal-api-793753803919.us-central1.run.app`
-  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:bd0fa13`
-  - digest: `sha256:bf2f416dd19f404eb10888c597c996b1a797affcdbe2b1fbf0909525deb6839a`
-  - revision: `liminal-api-00003-zfq`
+  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:aaba08e`
+  - digest: `sha256:8936a3cd5523ce1024b9d7975fefa8f481d01eaa8ac088ddd9942a68e7156965`
+  - revision: `liminal-api-00005-862`
   - access: private; `chrizbo@gmail.com` has `roles/run.invoker`
   - service account: `liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
   - Cloud SQL connection: `liminal-drive-analytics:us-central1:liminal-postgres`
@@ -101,6 +101,8 @@ Granted:
 - `liminal-worker`: `roles/cloudkms.cryptoKeyEncrypterDecrypter` on `credential-encryption`
 - `liminal-scheduler`: `roles/cloudtasks.enqueuer`
 - `chrizbo@gmail.com`: `roles/run.invoker` on the private `liminal-api` Cloud Run service
+- `chrizbo@gmail.com`: `roles/iam.serviceAccountTokenCreator` on `liminal-api` for private smoke tests
+- `liminal-api`: `roles/run.invoker` on the private `liminal-api` Cloud Run service for service-account-token smoke tests
 
 Do not grant broad deployer roles until the deployment path is defined.
 
@@ -115,13 +117,17 @@ uvicorn src.api:app --host 0.0.0.0 --port ${PORT}
 Use `/health` for a lightweight runtime smoke check in Cloud Run. `/healthz`
 is also available for local/container tests, but the Cloud Run authenticated
 proxy returned a Google front-end 404 for that exact path during setup.
-The private Cloud Run smoke test uses the authenticated local proxy. The
-`bd0fa13` deployment confirmed `/health` returns `{"ok": true}` and
-`/configuration` returns:
+The private Cloud Run smoke test uses an audience-bound identity token minted by
+impersonating `liminal-api` with `--include-email`. The `aaba08e` deployment
+confirmed `/health` returns `{"ok": true}` and `/configuration` returns:
 
 ```json
 {"write_token_required": true, "database_backend": "postgresql"}
 ```
+
+`POST /google-connection/oauth/start` reaches the app and currently returns the
+expected missing-config error until `liminal-google-oauth-client-config` is
+created.
 
 ## Next Cloud Commands
 
@@ -160,3 +166,6 @@ Still needed before live hosted connection testing:
   `liminal-google-oauth-client-config`.
 - Redeploy `liminal-api` with `DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG`
   sourced from that secret.
+
+Secret hygiene note: `liminal-write-token` version 2 was rotated without a
+trailing newline so it can be used reliably in `X-Admin-Token` headers.
