@@ -55,9 +55,9 @@ Created:
   - service: `liminal-api`
   - URL: `https://liminal-api-bkcwct2l6a-uc.a.run.app`
   - alternate URL: `https://liminal-api-793753803919.us-central1.run.app`
-  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:initial`
-  - digest: `sha256:fac6568c376e401f9d8217478c08f8339c596c85bc922d753c12735b7841dea7`
-  - revision: `liminal-api-00001-k74`
+  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:bd0fa13`
+  - digest: `sha256:bf2f416dd19f404eb10888c597c996b1a797affcdbe2b1fbf0909525deb6839a`
+  - revision: `liminal-api-00003-zfq`
   - access: private; `chrizbo@gmail.com` has `roles/run.invoker`
   - service account: `liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
   - Cloud SQL connection: `liminal-drive-analytics:us-central1:liminal-postgres`
@@ -114,8 +114,9 @@ uvicorn src.api:app --host 0.0.0.0 --port ${PORT}
 Use `/health` for a lightweight runtime smoke check in Cloud Run. `/healthz`
 is also available for local/container tests, but the Cloud Run authenticated
 proxy returned a Google front-end 404 for that exact path during setup.
-The initial private Cloud Run smoke test used the authenticated local proxy and
-confirmed `/configuration` returns:
+The private Cloud Run smoke test uses the authenticated local proxy. The
+`bd0fa13` deployment confirmed `/health` returns `{"ok": true}` and
+`/configuration` returns:
 
 ```json
 {"write_token_required": true, "database_backend": "postgresql"}
