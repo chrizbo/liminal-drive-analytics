@@ -465,6 +465,11 @@ def healthz():
     return {"ok": True}
 
 
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
 def _public_job(job):
     return {key: value for key, value in job.items() if key not in {"thread"}}
 

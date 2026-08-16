@@ -148,6 +148,9 @@ def test_web_app_and_workspace_list_are_served():
     health = client.get("/healthz")
     assert health.status_code == 200
     assert health.json() == {"ok": True}
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert health.json() == {"ok": True}
 
     workspaces = client.get("/workspaces").json()
     assert [workspace["id"] for workspace in workspaces[:2]] == ["demo", "live"]
@@ -629,15 +632,15 @@ def test_failed_indexing_job_marks_workspace_degraded(monkeypatch, tmp_path):
     job_id = started.json()["id"]
     for _ in range(20):
         result = client.get(f"/indexing/jobs/{job_id}?workspace=live").json()
-        if result["status"] == "failed":
+        conn = db.connect()
+        workspace = conn.execute("SELECT * FROM workspaces WHERE id='live'").fetchone()
+        conn.close()
+        if result["status"] == "failed" and workspace["crawl_health"] == "degraded":
             break
         time.sleep(0.01)
 
     assert result["status"] == "failed"
     assert result["error"] == "Drive quota exhausted"
-    conn = db.connect()
-    workspace = conn.execute("SELECT * FROM workspaces WHERE id='live'").fetchone()
-    conn.close()
     assert workspace["last_attempted_crawl_at"]
     assert workspace["last_successful_crawl_at"] is None
     assert workspace["crawl_health"] == "degraded"

@@ -111,7 +111,9 @@ The repo includes a `Dockerfile` for the FastAPI/static web service. It starts:
 uvicorn src.api:app --host 0.0.0.0 --port ${PORT}
 ```
 
-Use `/healthz` for a lightweight runtime smoke check in local/container tests.
+Use `/health` for a lightweight runtime smoke check in Cloud Run. `/healthz`
+is also available for local/container tests, but the Cloud Run authenticated
+proxy returned a Google front-end 404 for that exact path during setup.
 The initial private Cloud Run smoke test used the authenticated local proxy and
 confirmed `/configuration` returns:
 
