@@ -460,6 +460,11 @@ def web_app():
     return FileResponse(os.path.join(WEB_DIR, "index.html"))
 
 
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
 def _public_job(job):
     return {key: value for key, value in job.items() if key not in {"thread"}}
 

@@ -1,0 +1,12 @@
+.git
+.claude
+.pytest_cache
+__pycache__
+*.pyc
+.DS_Store
+data
+*.db
+config.json
+credentials.json
+token.json
+node_modules

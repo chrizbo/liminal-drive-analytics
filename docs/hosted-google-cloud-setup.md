@@ -35,6 +35,32 @@ Created:
   - rotation: 90 days
 - Cloud Tasks queue:
   - `projects/liminal-drive-analytics/locations/us-central1/queues/liminal-crawl`
+- Cloud SQL PostgreSQL instance:
+  - instance: `liminal-postgres`
+  - connection name: `liminal-drive-analytics:us-central1:liminal-postgres`
+  - database version: PostgreSQL 16
+  - edition/tier: Enterprise `db-f1-micro`
+  - zone: `us-central1-a`
+  - storage: 10 GB SSD, auto-resize enabled
+  - backups: enabled, 09:00 UTC start, 7 retained backups
+  - deletion protection: enabled
+  - app database: `liminal`
+  - app user: `liminal_app`
+- Secret Manager secrets:
+  - `liminal-db-password`
+  - `liminal-database-url`
+  - `liminal-app-session-secret`
+  - `liminal-write-token`
+- Cloud Run service:
+  - service: `liminal-api`
+  - URL: `https://liminal-api-bkcwct2l6a-uc.a.run.app`
+  - alternate URL: `https://liminal-api-793753803919.us-central1.run.app`
+  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:initial`
+  - digest: `sha256:fac6568c376e401f9d8217478c08f8339c596c85bc922d753c12735b7841dea7`
+  - revision: `liminal-api-00001-k74`
+  - access: private; `chrizbo@gmail.com` has `roles/run.invoker`
+  - service account: `liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
+  - Cloud SQL connection: `liminal-drive-analytics:us-central1:liminal-postgres`
 - Runtime service accounts:
   - `liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
   - `liminal-worker@liminal-drive-analytics.iam.gserviceaccount.com`
@@ -69,42 +95,39 @@ Granted:
 - `liminal-api`: `roles/cloudsql.client`
 - `liminal-worker`: `roles/cloudsql.client`
 - `liminal-api`: `roles/secretmanager.secretAccessor`
-
-Remaining baseline grants before first hosted deploy:
-
 - `liminal-worker`: `roles/secretmanager.secretAccessor`
-- `liminal-api`: KMS decrypt/encrypt on `credential-encryption`
-- `liminal-worker`: KMS decrypt/encrypt on `credential-encryption`
-- `liminal-scheduler`: task enqueue permission for `liminal-crawl`
+- `liminal-api`: `roles/cloudkms.cryptoKeyEncrypterDecrypter` on `credential-encryption`
+- `liminal-worker`: `roles/cloudkms.cryptoKeyEncrypterDecrypter` on `credential-encryption`
+- `liminal-scheduler`: `roles/cloudtasks.enqueuer`
+- `chrizbo@gmail.com`: `roles/run.invoker` on the private `liminal-api` Cloud Run service
 
 Do not grant broad deployer roles until the deployment path is defined.
 
-## Next Cloud Commands
+## Container Packaging
 
-Grant the remaining runtime IAM:
+The repo includes a `Dockerfile` for the FastAPI/static web service. It starts:
 
 ```bash
-gcloud projects add-iam-policy-binding liminal-drive-analytics \
-  --member=serviceAccount:liminal-worker@liminal-drive-analytics.iam.gserviceaccount.com \
-  --role=roles/secretmanager.secretAccessor \
-  --quiet
-
-gcloud kms keys add-iam-policy-binding credential-encryption \
-  --keyring=liminal \
-  --location=us-central1 \
-  --member=serviceAccount:liminal-api@liminal-drive-analytics.iam.gserviceaccount.com \
-  --role=roles/cloudkms.cryptoKeyEncrypterDecrypter \
-  --project=liminal-drive-analytics \
-  --quiet
-
-gcloud kms keys add-iam-policy-binding credential-encryption \
-  --keyring=liminal \
-  --location=us-central1 \
-  --member=serviceAccount:liminal-worker@liminal-drive-analytics.iam.gserviceaccount.com \
-  --role=roles/cloudkms.cryptoKeyEncrypterDecrypter \
-  --project=liminal-drive-analytics \
-  --quiet
+uvicorn src.api:app --host 0.0.0.0 --port ${PORT}
 ```
 
-Create Cloud SQL only after confirming the billing account, size, and deletion
-protection setting, because it creates ongoing paid capacity.
+Use `/healthz` for a lightweight runtime smoke check in local/container tests.
+The initial private Cloud Run smoke test used the authenticated local proxy and
+confirmed `/configuration` returns:
+
+```json
+{"write_token_required": true, "database_backend": "postgresql"}
+```
+
+## Next Cloud Commands
+
+The first private Cloud Run service is deployed. Future deploys should build a
+new immutable image tag and redeploy `liminal-api`, wiring:
+
+- `DRIVE_ANALYTICS_DATABASE_URL` from `liminal-database-url`
+- `DRIVE_ANALYTICS_WRITE_TOKEN` from `liminal-write-token`
+- `--add-cloudsql-instances=liminal-drive-analytics:us-central1:liminal-postgres`
+- `--service-account=liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
+
+Keep the first Cloud Run service private until hosted OAuth and invite flow are
+implemented.

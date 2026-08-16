@@ -145,6 +145,10 @@ def test_web_app_and_workspace_list_are_served():
     assert response.status_code == 200
     assert "Liminal Drive Analytics" in response.text
 
+    health = client.get("/healthz")
+    assert health.status_code == 200
+    assert health.json() == {"ok": True}
+
     workspaces = client.get("/workspaces").json()
     assert [workspace["id"] for workspace in workspaces[:2]] == ["demo", "live"]
     assert workspaces[0]["name"] == "Synthetic product team"
