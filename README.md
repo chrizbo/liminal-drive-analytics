@@ -113,6 +113,9 @@ export OPENAI_API_KEY=...                 # enables brief polishing
 export DRIVE_ANALYTICS_DATABASE_URL=...   # optional PostgreSQL URL; SQLite is used when unset
 export DRIVE_ANALYTICS_WRITE_TOKEN=...   # protects FastAPI POST/PATCH endpoints
 export DRIVE_ANALYTICS_CORS_ORIGINS=http://localhost:3000
+export DRIVE_ANALYTICS_BASE_URL=...       # hosted OAuth callback base URL
+export DRIVE_ANALYTICS_APP_SESSION_SECRET=...
+export DRIVE_ANALYTICS_KMS_KEY_NAME=...   # encrypts hosted Google credentials
 ```
 
 ### 4. Authenticate

@@ -411,6 +411,110 @@ def test_disconnect_pauses_schedule_and_crawl_health(monkeypatch, tmp_path):
     assert context["workspace"]["failure_reason"] == "Google Drive disconnected"
 
 
+def test_oauth_state_rejects_tampering(monkeypatch):
+    monkeypatch.setenv(api.APP_SESSION_SECRET_ENV, "state-secret")
+    state = api._sign_oauth_state({
+        "v": 1,
+        "tenant_id": db.LOCAL_TENANT_ID,
+        "workspace_id": "live",
+        "iat": int(time.time()),
+    })
+
+    assert api._verify_oauth_state(state)["workspace_id"] == "live"
+    tampered = state[:-1] + ("A" if state[-1] != "A" else "B")
+    try:
+        api._verify_oauth_state(tampered)
+        assert False, "tampered state should be rejected"
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 400
+
+
+def test_google_oauth_start_returns_authorization_url(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "oauth-start.db"))
+    monkeypatch.setenv("DRIVE_ANALYTICS_WRITE_TOKEN", "secret")
+    monkeypatch.setenv(api.APP_SESSION_SECRET_ENV, "state-secret")
+    monkeypatch.setenv(api.BASE_URL_ENV, "https://liminal.example")
+
+    class FakeFlow:
+        def authorization_url(self, **kwargs):
+            assert kwargs["access_type"] == "offline"
+            assert kwargs["prompt"] == "consent"
+            return "https://accounts.google.com/o/oauth2/v2/auth?state=signed", "signed"
+
+    def fake_flow(redirect_uri, state=None):
+        assert redirect_uri == "https://liminal.example/google-connection/oauth/callback"
+        assert api._verify_oauth_state(state)["workspace_id"] == "live"
+        return FakeFlow()
+
+    monkeypatch.setattr(api, "build_web_oauth_flow", fake_flow)
+
+    response = TestClient(api.app).post(
+        "/google-connection/oauth/start?workspace=live",
+        headers={"X-Admin-Token": "secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["authorization_url"].startswith("https://accounts.google.com/")
+    assert response.json()["redirect_uri"] == "https://liminal.example/google-connection/oauth/callback"
+
+
+def test_google_oauth_callback_stores_encrypted_connection(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "oauth-callback.db"))
+    monkeypatch.setenv(api.APP_SESSION_SECRET_ENV, "state-secret")
+    monkeypatch.setenv(api.BASE_URL_ENV, "https://liminal.example")
+    monkeypatch.setenv(api.KMS_KEY_ENV, "projects/p/locations/l/keyRings/r/cryptoKeys/k")
+
+    state = api._sign_oauth_state({
+        "v": 1,
+        "tenant_id": db.LOCAL_TENANT_ID,
+        "workspace_id": "live",
+        "iat": int(time.time()),
+    })
+
+    class FakeCredentials:
+        scopes = ["scope-a"]
+
+        def to_json(self):
+            return '{"refresh_token":"secret"}'
+
+    class FakeFlow:
+        credentials = FakeCredentials()
+
+        def fetch_token(self, code):
+            assert code == "oauth-code"
+
+    class FakeAbout:
+        def get(self, fields):
+            assert fields == "user(emailAddress,displayName)"
+            return self
+
+        def execute(self):
+            return {"user": {"emailAddress": "owner@example.com"}}
+
+    class FakeDrive:
+        def about(self):
+            return FakeAbout()
+
+    monkeypatch.setattr(api, "build_web_oauth_flow", lambda redirect_uri, state=None: FakeFlow())
+    monkeypatch.setattr(api, "build_services", lambda creds: (FakeDrive(), None, None, None, None))
+    monkeypatch.setattr(api, "encrypt_text", lambda plaintext, aad=None: f"encrypted:{aad}:{plaintext}")
+
+    response = TestClient(api.app).get(
+        f"/google-connection/oauth/callback?code=oauth-code&state={state}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "connected"
+    assert response.json()["account_email"] == "owner@example.com"
+    conn = db.connect()
+    row = conn.execute("SELECT * FROM google_connections").fetchone()
+    workspace = conn.execute("SELECT * FROM workspaces WHERE id='live'").fetchone()
+    conn.close()
+    assert row["token_encrypted"].startswith("encrypted:tenant:local:live:google")
+    assert row["token_version"].startswith("kms:projects/p/")
+    assert workspace["crawl_health"] == "healthy"
+
+
 def test_delete_workspace_data_removes_indexed_rows(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "delete-data.db"))
     monkeypatch.setenv("DRIVE_ANALYTICS_WRITE_TOKEN", "secret")

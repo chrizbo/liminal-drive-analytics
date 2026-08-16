@@ -2,6 +2,7 @@ google-auth>=2.0.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.0
 google-api-python-client>=2.0.0
+google-cloud-kms>=2.24.0
 networkx>=3.0
 tqdm>=4.0.0
 fastapi>=0.100.0

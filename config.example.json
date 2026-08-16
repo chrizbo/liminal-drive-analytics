@@ -12,6 +12,11 @@
     "OPENAI_API_KEY": "Optional. Enables Leader Brief polishing.",
     "DRIVE_ANALYTICS_DATABASE_URL": "Optional. PostgreSQL connection URL for hosted-service mode; SQLite is used when unset.",
     "DRIVE_ANALYTICS_WRITE_TOKEN": "Optional for local use. When configured, required for FastAPI POST/PATCH endpoints.",
-    "DRIVE_ANALYTICS_CORS_ORIGINS": "Comma-separated origins; defaults to * for local use."
+    "DRIVE_ANALYTICS_CORS_ORIGINS": "Comma-separated origins; defaults to * for local use.",
+    "DRIVE_ANALYTICS_BASE_URL": "Hosted base URL used for OAuth callbacks.",
+    "DRIVE_ANALYTICS_APP_SESSION_SECRET": "Secret used to sign hosted OAuth state.",
+    "DRIVE_ANALYTICS_KMS_KEY_NAME": "Full Cloud KMS key resource name used to encrypt hosted Google credentials.",
+    "DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG": "Hosted OAuth client JSON, usually provided from Secret Manager.",
+    "DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG_FILE": "Alternative path to hosted OAuth client JSON."
   }
 }

@@ -51,6 +51,7 @@ Created:
   - `liminal-database-url`
   - `liminal-app-session-secret`
   - `liminal-write-token`
+  - pending: `liminal-google-oauth-client-config`
 - Cloud Run service:
   - service: `liminal-api`
   - URL: `https://liminal-api-bkcwct2l6a-uc.a.run.app`
@@ -129,8 +130,33 @@ new immutable image tag and redeploy `liminal-api`, wiring:
 
 - `DRIVE_ANALYTICS_DATABASE_URL` from `liminal-database-url`
 - `DRIVE_ANALYTICS_WRITE_TOKEN` from `liminal-write-token`
+- `DRIVE_ANALYTICS_APP_SESSION_SECRET` from `liminal-app-session-secret`
+- `DRIVE_ANALYTICS_BASE_URL=https://liminal-api-bkcwct2l6a-uc.a.run.app`
+- `DRIVE_ANALYTICS_KMS_KEY_NAME=projects/liminal-drive-analytics/locations/us-central1/keyRings/liminal/cryptoKeys/credential-encryption`
+- `DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG` from `liminal-google-oauth-client-config` after creating the hosted web OAuth client
 - `--add-cloudsql-instances=liminal-drive-analytics:us-central1:liminal-postgres`
 - `--service-account=liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
 
 Keep the first Cloud Run service private until hosted OAuth and invite flow are
 implemented.
+
+## Hosted OAuth
+
+The API includes:
+
+- `POST /google-connection/oauth/start`
+- `GET /google-connection/oauth/callback`
+
+The start endpoint returns a Google authorization URL with signed stateless
+OAuth state. The callback exchanges the code, verifies state, encrypts the
+credential JSON with KMS, and stores it in `google_connections`.
+
+Still needed before live hosted connection testing:
+
+- Create a Google OAuth web client in the `liminal-drive-analytics` project.
+- Add redirect URI:
+  - `https://liminal-api-bkcwct2l6a-uc.a.run.app/google-connection/oauth/callback`
+- Store the OAuth client JSON as Secret Manager secret
+  `liminal-google-oauth-client-config`.
+- Redeploy `liminal-api` with `DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG`
+  sourced from that secret.

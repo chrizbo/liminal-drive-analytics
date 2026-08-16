@@ -11,10 +11,14 @@ Or from the src/ directory:
 """
 
 import os
+import base64
+import hashlib
+import hmac
 import json
 import secrets
 import sys
 import threading
+import time
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
@@ -54,6 +58,8 @@ from operations import (
     refresh_findings, update_review,
 )
 from sources import load_sources
+from auth import SCOPES, build_services, build_web_oauth_flow
+from credential_crypto import KMS_KEY_ENV, encrypt_text
 import indexer
 from indexer import run as run_indexer
 import ontology as _ontology
@@ -61,6 +67,8 @@ import ontology as _ontology
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT, "web")
 CONFIG_PATH = os.path.join(ROOT, "config.json")
+BASE_URL_ENV = "DRIVE_ANALYTICS_BASE_URL"
+APP_SESSION_SECRET_ENV = "DRIVE_ANALYTICS_APP_SESSION_SECRET"
 active_database_path = ContextVar("active_database_path", default=None)
 active_workspace = ContextVar("active_workspace", default=None)
 active_tenant = ContextVar("active_tenant", default=None)
@@ -163,6 +171,17 @@ def get_conn():
     return conn
 
 
+def get_conn_for_workspace(workspace):
+    if db.service_database_url() and workspace and workspace["kind"] != "demo":
+        conn = connect_service_database()
+    else:
+        conn = connect(workspace.get("database_path") or db.DB_PATH)
+    init(conn)
+    db.ensure_service_context(conn, workspace)
+    db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
+    return conn
+
+
 def current_scope():
     return from_workspace(active_workspace.get())
 
@@ -173,6 +192,61 @@ def require_write_token(x_admin_token: Optional[str] = Header(default=None)):
         return
     if not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
         raise HTTPException(status_code=401, detail="Valid X-Admin-Token required")
+
+
+def _workspace_by_id(workspace_id):
+    return next((item for item in available_workspaces() if item["id"] == workspace_id), None)
+
+
+def _state_secret():
+    secret = os.environ.get(APP_SESSION_SECRET_ENV) or os.environ.get("DRIVE_ANALYTICS_WRITE_TOKEN")
+    if not secret:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{APP_SESSION_SECRET_ENV} is required for hosted OAuth state",
+        )
+    return secret.encode("utf-8")
+
+
+def _b64url(data):
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _unb64url(value):
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _sign_oauth_state(payload):
+    body = _b64url(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    signature = hmac.new(_state_secret(), body.encode("ascii"), hashlib.sha256).digest()
+    return f"{body}.{_b64url(signature)}"
+
+
+def _verify_oauth_state(state, max_age_seconds=3600):
+    try:
+        body, signature = state.split(".", 1)
+        expected = _b64url(hmac.new(_state_secret(), body.encode("ascii"), hashlib.sha256).digest())
+        if not secrets.compare_digest(signature, expected):
+            raise ValueError("OAuth state signature mismatch")
+        payload = json.loads(_unb64url(body).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state") from exc
+    if int(time.time()) - int(payload.get("iat", 0)) > max_age_seconds:
+        raise HTTPException(status_code=400, detail="OAuth state expired")
+    if payload.get("v") != 1 or not payload.get("workspace_id") or not payload.get("tenant_id"):
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    return payload
+
+
+def _oauth_redirect_uri(request):
+    base_url = os.environ.get(BASE_URL_ENV, "").strip().rstrip("/")
+    if not base_url:
+        base_url = str(request.base_url).rstrip("/")
+    return f"{base_url}/google-connection/oauth/callback"
+
+
+def _credential_aad(tenant_id, workspace_id, provider="google"):
+    return f"{tenant_id}:{workspace_id}:{provider}"
 
 
 class ReviewUpdate(BaseModel):
@@ -381,6 +455,92 @@ def google_connection():
     conn = get_conn()
     try:
         connection = google_connection_row(conn, current_scope())
+    finally:
+        conn.close()
+    return _public_google_connection(connection, workspace)
+
+
+@app.post("/google-connection/oauth/start", dependencies=[Depends(require_write_token)])
+def google_connection_oauth_start(request: Request):
+    workspace = active_workspace.get()
+    if workspace["kind"] == "demo":
+        raise HTTPException(status_code=400, detail="Demo data is not connected to Google Drive")
+    state = _sign_oauth_state({
+        "v": 1,
+        "tenant_id": workspace["tenant_id"],
+        "workspace_id": workspace["id"],
+        "nonce": secrets.token_urlsafe(18),
+        "iat": int(time.time()),
+    })
+    redirect_uri = _oauth_redirect_uri(request)
+    try:
+        flow = build_web_oauth_flow(redirect_uri, state=state)
+        authorization_url, _ = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "authorization_url": authorization_url,
+        "redirect_uri": redirect_uri,
+        "scopes": SCOPES,
+    }
+
+
+@app.get("/google-connection/oauth/callback")
+def google_connection_oauth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google OAuth failed: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth code or state")
+    payload = _verify_oauth_state(state)
+    workspace = _workspace_by_id(payload["workspace_id"])
+    if not workspace or workspace["tenant_id"] != payload["tenant_id"]:
+        raise HTTPException(status_code=400, detail="OAuth workspace is no longer available")
+    if workspace["kind"] == "demo":
+        raise HTTPException(status_code=400, detail="Demo data is not connected to Google Drive")
+
+    redirect_uri = _oauth_redirect_uri(request)
+    try:
+        flow = build_web_oauth_flow(redirect_uri, state=state)
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        drive, _, _, _, _ = build_services(creds)
+        about = drive.about().get(fields="user(emailAddress,displayName)").execute()
+        account_email = about.get("user", {}).get("emailAddress")
+        token_encrypted = encrypt_text(
+            creds.to_json(),
+            aad=_credential_aad(workspace["tenant_id"], workspace["id"]),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    now = _utc_now()
+    conn = get_conn_for_workspace(workspace)
+    try:
+        existing = google_connection_row(conn, from_workspace(workspace))
+        upsert_google_connection(conn, {
+            "id": existing["id"] if existing else str(uuid.uuid4()),
+            "account_email": account_email,
+            "status": "connected",
+            "granted_scopes": list(creds.scopes or SCOPES),
+            "token_encrypted": token_encrypted,
+            "token_version": f"kms:{os.environ.get(KMS_KEY_ENV, '').strip()}",
+            "connected_at": now,
+            "disconnected_at": None,
+            "last_checked_at": now,
+            "health": "healthy",
+            "error": None,
+            "created_at": existing["created_at"] if existing else now,
+            "updated_at": now,
+        }, from_workspace(workspace))
+        db.update_workspace_crawl_state(conn, workspace["tenant_id"], workspace["id"], {
+            "crawl_health": "healthy",
+            "failure_reason": None,
+        })
+        connection = google_connection_row(conn, from_workspace(workspace))
     finally:
         conn.close()
     return _public_google_connection(connection, workspace)
