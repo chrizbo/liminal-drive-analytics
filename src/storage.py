@@ -400,7 +400,7 @@ def list_people(conn, scope=None):
         LEFT JOIN person_activity pa ON pa.person_id = p.id
             AND pa.tenant_id = p.tenant_id AND pa.workspace_id = p.workspace_id
         {scope_sql}
-        GROUP BY p.id
+        GROUP BY p.id, p.display_name, p.email
         ORDER BY COALESCE(NULLIF(p.display_name,''), NULLIF(p.email,''), p.id)
     """.format(scope_sql=scope_sql), scope_params).fetchall()
     return [dict(row) for row in rows]

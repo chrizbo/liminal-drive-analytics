@@ -139,7 +139,32 @@ def test_storage_upserts_use_scoped_conflicts_for_postgres():
     assert "ON CONFLICT(tenant_id, workspace_id, id)" in sql
     assert "ON CONFLICT(tenant_id, workspace_id, src_id, dst_id)" in sql
     assert "ON CONFLICT(tenant_id, workspace_id, document_id, date)" in sql
+
+
+def test_list_people_groups_selected_person_columns_for_postgres():
+    from storage import StorageScope, list_people
+
+    class FakeCursor:
+        def fetchall(self):
+            return []
+
+    class FakePostgresConnection:
+        dialect = "postgresql"
+
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, sql, params=()):
+            self.statements.append((sql, params))
+            return FakeCursor()
+
+    conn = FakePostgresConnection()
+    list_people(conn, StorageScope("tenant-a", "workspace-a"))
+
+    sql, params = conn.statements[0]
+    assert "GROUP BY p.id, p.display_name, p.email" in sql
     assert "%s" in sql
+    assert params == ["tenant-a", "workspace-a"]
 
 
 def test_schema_sql_uses_postgres_identity_for_review_events():
