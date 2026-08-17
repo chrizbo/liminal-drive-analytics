@@ -56,9 +56,9 @@ Created:
   - service: `liminal-api`
   - URL: `https://liminal-api-bkcwct2l6a-uc.a.run.app`
   - alternate URL: `https://liminal-api-793753803919.us-central1.run.app`
-  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:aaba08e`
-  - digest: `sha256:8936a3cd5523ce1024b9d7975fefa8f481d01eaa8ac088ddd9942a68e7156965`
-  - revision: `liminal-api-00007-v95`
+  - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:0dc390c`
+  - digest: `sha256:45025404f5192bf93a4eeed0dcca2cd4e1efc77cf979a94b46700463f4d8ed3f`
+  - revision: `liminal-api-00008-5nx`
   - access: private; `chrizbo@gmail.com` has `roles/run.invoker`
   - service account: `liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
   - Cloud SQL connection: `liminal-drive-analytics:us-central1:liminal-postgres`
@@ -118,7 +118,7 @@ Use `/health` for a lightweight runtime smoke check in Cloud Run. `/healthz`
 is also available for local/container tests, but the Cloud Run authenticated
 proxy returned a Google front-end 404 for that exact path during setup.
 The private Cloud Run smoke test uses an audience-bound identity token minted by
-impersonating `liminal-api` with `--include-email`. The `aaba08e` deployment
+impersonating `liminal-api` with `--include-email`. The `0dc390c` deployment
 confirmed `/health` returns `{"ok": true}` and `/configuration` returns:
 
 ```json
