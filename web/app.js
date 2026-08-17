@@ -133,6 +133,16 @@ function ensureWriteToken(message) {
   localStorage.setItem("liminal-admin-token", state.token);
   return true;
 }
+async function connectGoogleDrive() {
+  if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to connect Google Drive")) return;
+  try {
+    const result = await api("/google-connection/oauth/start", { method: "POST", body: JSON.stringify({}) });
+    if (!result.authorization_url) throw new Error("OAuth start did not return an authorization URL");
+    window.location.assign(result.authorization_url);
+  } catch (error) {
+    toast(error.message);
+  }
+}
 function metric(label, value, note, href) {
   return `<a class="summary-metric" href="${href}"><strong>${Number(value || 0).toLocaleString()}</strong><span>${esc(label)}</span><small>${esc(note)} →</small></a>`;
 }
@@ -288,12 +298,14 @@ async function settings() {
     ? { status: "idle" }
     : await api("/indexing/jobs/current").catch(() => ({ status: "idle" }));
   const running = ["queued", "running"].includes(job.status);
+  const connectedAccount = connection.account_email || connection.status || "Disconnected";
+  const connectLabel = connection.status === "connected" || connection.account_email ? "Reconnect Drive" : "Connect Drive";
   app.innerHTML = `<div class="grid two-col settings-grid">
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
       <div class="settings-workspace"><span>Selected workspace</span><strong>${esc(workspace?.name || "")}</strong></div>
       ${crawlStateMarkup(workspace)}
-      <div class="settings-workspace"><span>Google connection</span><strong>${esc(connection.account_email || connection.status || "Disconnected")}</strong></div>
+      <div class="settings-workspace connection-row"><span>Google connection</span><strong>${esc(connectedAccount)}</strong>${workspace?.kind === "demo" ? "" : `<button class="button primary small" data-connect-drive>${esc(connectLabel)}</button>`}</div>
       ${workspace?.kind === "demo"
         ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>`
         : `<p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
@@ -349,6 +361,7 @@ async function settings() {
       settings();
     } catch (error) { toast(error.message); }
   };
+  document.querySelector("[data-connect-drive]")?.addEventListener("click", connectGoogleDrive);
   document.querySelector("[data-disconnect-drive]")?.addEventListener("click", async () => {
     if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to disconnect Drive")) return;
     try {
