@@ -51,14 +51,14 @@ Created:
   - `liminal-database-url`
   - `liminal-app-session-secret`
   - `liminal-write-token`
-  - pending: `liminal-google-oauth-client-config`
+  - `liminal-google-oauth-client-config`
 - Cloud Run service:
   - service: `liminal-api`
   - URL: `https://liminal-api-bkcwct2l6a-uc.a.run.app`
   - alternate URL: `https://liminal-api-793753803919.us-central1.run.app`
   - image: `us-central1-docker.pkg.dev/liminal-drive-analytics/liminal/api:aaba08e`
   - digest: `sha256:8936a3cd5523ce1024b9d7975fefa8f481d01eaa8ac088ddd9942a68e7156965`
-  - revision: `liminal-api-00005-862`
+  - revision: `liminal-api-00007-v95`
   - access: private; `chrizbo@gmail.com` has `roles/run.invoker`
   - service account: `liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
   - Cloud SQL connection: `liminal-drive-analytics:us-central1:liminal-postgres`
@@ -125,9 +125,11 @@ confirmed `/health` returns `{"ok": true}` and `/configuration` returns:
 {"write_token_required": true, "database_backend": "postgresql"}
 ```
 
-`POST /google-connection/oauth/start` reaches the app and currently returns the
-expected missing-config error until `liminal-google-oauth-client-config` is
-created.
+`POST /google-connection/oauth/start` reaches the app and returns a Google
+authorization URL for client
+`793753803919-iqf8b03592tqsn7sm7d5c3fjgldvcskm.apps.googleusercontent.com`
+with callback
+`https://liminal-api-bkcwct2l6a-uc.a.run.app/google-connection/oauth/callback`.
 
 ## Next Cloud Commands
 
@@ -139,7 +141,7 @@ new immutable image tag and redeploy `liminal-api`, wiring:
 - `DRIVE_ANALYTICS_APP_SESSION_SECRET` from `liminal-app-session-secret`
 - `DRIVE_ANALYTICS_BASE_URL=https://liminal-api-bkcwct2l6a-uc.a.run.app`
 - `DRIVE_ANALYTICS_KMS_KEY_NAME=projects/liminal-drive-analytics/locations/us-central1/keyRings/liminal/cryptoKeys/credential-encryption`
-- `DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG` from `liminal-google-oauth-client-config` after creating the hosted web OAuth client
+- `DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG` from `liminal-google-oauth-client-config`
 - `--add-cloudsql-instances=liminal-drive-analytics:us-central1:liminal-postgres`
 - `--service-account=liminal-api@liminal-drive-analytics.iam.gserviceaccount.com`
 
@@ -157,15 +159,15 @@ The start endpoint returns a Google authorization URL with signed stateless
 OAuth state. The callback exchanges the code, verifies state, encrypts the
 credential JSON with KMS, and stores it in `google_connections`.
 
-Still needed before live hosted connection testing:
+Hosted OAuth client state:
 
-- Create a Google OAuth web client in the `liminal-drive-analytics` project.
-- Add redirect URI:
-  - `https://liminal-api-bkcwct2l6a-uc.a.run.app/google-connection/oauth/callback`
-- Store the OAuth client JSON as Secret Manager secret
-  `liminal-google-oauth-client-config`.
-- Redeploy `liminal-api` with `DRIVE_ANALYTICS_GOOGLE_OAUTH_CLIENT_CONFIG`
-  sourced from that secret.
+- Web client ID:
+  `793753803919-iqf8b03592tqsn7sm7d5c3fjgldvcskm.apps.googleusercontent.com`
+- Authorized redirect URI:
+  `https://liminal-api-bkcwct2l6a-uc.a.run.app/google-connection/oauth/callback`
+- Secret Manager secret: `liminal-google-oauth-client-config`
+- Secret version 1 contained an older desktop client and is disabled.
+- Secret version 2 contains the correct hosted web client.
 
 Secret hygiene note: `liminal-write-token` version 2 was rotated without a
 trailing newline so it can be used reliably in `X-Admin-Token` headers.
