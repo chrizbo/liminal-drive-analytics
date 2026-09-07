@@ -19,6 +19,7 @@ This folder tracks the path from local prototype to hosted service. The initial 
 - [Google Cloud Project Setup](google-cloud-project-setup.md) - separate cloud project setup, APIs, IAM, secrets, KMS, OAuth, and deployment targets.
 - [OAuth and Security Readiness](oauth-security-readiness.md) - consent, verification, token handling, tenant isolation, retention, and trust requirements.
 - [Future Considerations](future-considerations.md) - important ideas intentionally deferred from the research MVP.
+- [Product Ops / TPM Validation Synthesis](research/product-ops-tpm-validation-synthesis.md) - Sales Safari synthesis, market map, wedges, risks, and interview script for validating the first customer segment.
 
 ## Working Assumptions
 
