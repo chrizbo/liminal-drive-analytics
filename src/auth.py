@@ -66,7 +66,14 @@ def load_oauth_client_config():
 
 
 def build_web_oauth_flow(redirect_uri, state=None):
-    flow = Flow.from_client_config(load_oauth_client_config(), scopes=SCOPES, state=state)
+    # /oauth/start and /oauth/callback build separate Flow instances (no
+    # server-side session), so a PKCE verifier generated on start can't reach
+    # callback. This is a confidential "web" client that already sends
+    # client_secret during token exchange, so skip PKCE rather than smuggle
+    # the verifier through the state token.
+    flow = Flow.from_client_config(
+        load_oauth_client_config(), scopes=SCOPES, state=state, autogenerate_code_verifier=False
+    )
     flow.redirect_uri = redirect_uri
     return flow
 
