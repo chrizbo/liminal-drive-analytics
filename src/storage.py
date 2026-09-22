@@ -792,6 +792,22 @@ def google_connection_row(conn, scope=None, provider="google"):
     return result
 
 
+def google_connection_credential_row(conn, scope=None, provider="google"):
+    """Like google_connection_row, but also includes the encrypted token.
+
+    Internal use only (indexing needs to decrypt it) — never return this
+    row from an API response.
+    """
+    scope_sql, scope_params = and_scope(scope)
+    row = execute(conn, """
+        SELECT status, token_encrypted
+        FROM google_connections
+        WHERE provider = ? {scope_sql}
+        LIMIT 1
+    """.format(scope_sql=scope_sql), [provider] + scope_params).fetchone()
+    return dict(row) if row else None
+
+
 def upsert_google_connection(conn, values, scope=None):
     conflict = conflict_target(
         conn,

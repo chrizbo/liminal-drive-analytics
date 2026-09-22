@@ -516,6 +516,61 @@ def test_google_oauth_callback_stores_encrypted_connection(monkeypatch, tmp_path
     assert workspace["crawl_health"] == "healthy"
 
 
+def test_load_hosted_credentials_decrypts_stored_connection(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "hosted-creds.db"))
+    workspace = {"id": "live", "tenant_id": db.LOCAL_TENANT_ID, "name": "Live Drive", "kind": "live"}
+    conn = db.connect()
+    db.init(conn)
+    from storage import upsert_google_connection, from_workspace
+    upsert_google_connection(conn, {
+        "id": "conn-1",
+        "account_email": "owner@example.com",
+        "status": "connected",
+        "granted_scopes": ["scope-a"],
+        "token_encrypted": "ciphertext-blob",
+        "token_version": "kms:projects/p/locations/l/keyRings/r/cryptoKeys/k",
+        "connected_at": "2026-01-01T00:00:00Z",
+        "disconnected_at": None,
+        "last_checked_at": "2026-01-01T00:00:00Z",
+        "health": "healthy",
+        "error": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }, from_workspace(workspace))
+
+    seen = {}
+
+    def fake_decrypt(ciphertext, *, aad=None):
+        seen["ciphertext"] = ciphertext
+        seen["aad"] = aad
+        return '{"refresh_token":"secret"}'
+
+    monkeypatch.setattr(api, "decrypt_text", fake_decrypt)
+    monkeypatch.setattr(api, "credentials_from_json", lambda token_json: f"creds:{token_json}")
+
+    creds = api._load_hosted_credentials(conn, workspace)
+    conn.close()
+
+    assert seen["ciphertext"] == "ciphertext-blob"
+    assert seen["aad"] == "tenant:local:live:google"
+    assert creds == 'creds:{"refresh_token":"secret"}'
+
+
+def test_load_hosted_credentials_requires_a_connection(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "hosted-creds-missing.db"))
+    workspace = {"id": "live", "tenant_id": db.LOCAL_TENANT_ID, "name": "Live Drive", "kind": "live"}
+    conn = db.connect()
+    db.init(conn)
+    try:
+        try:
+            api._load_hosted_credentials(conn, workspace)
+            assert False, "expected RuntimeError"
+        except RuntimeError as exc:
+            assert "not connected" in str(exc)
+    finally:
+        conn.close()
+
+
 def test_delete_workspace_data_removes_indexed_rows(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "delete-data.db"))
     monkeypatch.setenv("DRIVE_ANALYTICS_WRITE_TOKEN", "secret")
@@ -875,14 +930,16 @@ def test_indexing_job_uses_service_database_connection_when_configured(monkeypat
     conn = FakeServiceConnection()
     monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://localhost/drive_analytics")
     monkeypatch.setattr(api, "connect_service_database", lambda: conn)
+    monkeypatch.setattr(api, "_load_hosted_credentials", lambda conn, workspace: "fake-creds")
     api.indexing_jobs.clear()
 
     def fake_run(
         days, verbose, expand, shared_drive=None, folder=None,
-        progress=None, scope=None, database_path=None, conn=None,
+        progress=None, scope=None, database_path=None, conn=None, creds=None,
     ):
         assert conn is not None
         assert conn.dialect == "postgresql"
+        assert creds == "fake-creds"
         assert scope.tenant_id == db.LOCAL_TENANT_ID
         assert scope.workspace_id == "shared:folder-1"
         assert database_path == workspace["database_path"]

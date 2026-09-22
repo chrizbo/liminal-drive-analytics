@@ -469,7 +469,7 @@ def resolve_people(people_svc, conn, verbose=False, progress=None, scope=None):
 
 def run(
     days, verbose, expand=False, shared_drive=None, folder=None,
-    progress=None, conn=None, scope=None, database_path=None,
+    progress=None, conn=None, scope=None, database_path=None, creds=None,
 ):
     def report(phase, message, current=None, total=None, **extra):
         if progress:
@@ -478,7 +478,8 @@ def run(
             })
 
     report("authenticating", "Connecting to Google Drive")
-    creds = get_credentials()
+    if creds is None:
+        creds = get_credentials()
     drive_svc, docs_svc, slides_svc, activity_svc, people_svc = build_services(creds)
     report("authenticating", "Connected to Google Drive")
     source = None

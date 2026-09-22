@@ -38,7 +38,7 @@ from storage import (
     active_indexing_job_row, attributed_view_count, document_lookup_maps,
     crawl_schedule_row, from_workspace, indexing_job_row, insert_indexing_job,
     delete_indexed_workspace_data, external_link_summary, get_document_detail,
-    google_connection_row, insert_analytics_event, list_people,
+    google_connection_row, google_connection_credential_row, insert_analytics_event, list_people,
     latest_indexing_job_row, list_workspace_documents,
     ontology_alignment_rows, ontology_drift_rows,
     ontology_terms as list_ontology_terms, overview_counts,
@@ -58,8 +58,8 @@ from operations import (
     refresh_findings, update_review,
 )
 from sources import load_sources
-from auth import SCOPES, build_services, build_web_oauth_flow
-from credential_crypto import KMS_KEY_ENV, encrypt_text
+from auth import SCOPES, build_services, build_web_oauth_flow, credentials_from_json
+from credential_crypto import KMS_KEY_ENV, decrypt_text, encrypt_text
 import indexer
 from indexer import run as run_indexer
 import ontology as _ontology
@@ -759,6 +759,17 @@ def _reconcile_orphaned_indexing_job(conn, workspace, job, scope):
     return {**job, **values}
 
 
+def _load_hosted_credentials(conn, workspace):
+    connection_row = google_connection_credential_row(conn, from_workspace(workspace))
+    if not connection_row or connection_row.get("status") != "connected" or not connection_row.get("token_encrypted"):
+        raise RuntimeError("Google Drive is not connected for this workspace")
+    token_json = decrypt_text(
+        connection_row["token_encrypted"],
+        aad=_credential_aad(workspace["tenant_id"], workspace["id"]),
+    )
+    return credentials_from_json(token_json)
+
+
 def _run_indexing_job(job_id, workspace, days, expand):
     conn = None
     try:
@@ -796,6 +807,7 @@ def _run_indexing_job(job_id, workspace, days, expand):
             db.ensure_service_context(conn, workspace)
             db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
             run_kwargs["conn"] = conn
+            run_kwargs["creds"] = _load_hosted_credentials(conn, workspace)
         result = run_indexer(days, False, expand, **run_kwargs)
         _update_indexing_job(job_id, {
             "status": "completed", "phase": "complete", "progress": 100,
