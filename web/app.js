@@ -335,6 +335,10 @@ async function settings() {
   const connectLabel = connection.status === "connected" || connection.account_email ? "Reconnect Drive" : "Connect Drive";
   const configuredModel = state.configuration.openai_model || "gpt-5.4-mini";
   const modelIsCustom = !OPENAI_MODEL_OPTIONS.includes(configuredModel);
+  const showSharedDriveCard = workspace?.kind !== "demo" && state.configuration.database_backend === "postgresql";
+  const sharedDriveCandidates = showSharedDriveCard
+    ? await api("/workspaces/shared-drive/candidates").catch(() => null)
+    : null;
   app.innerHTML = `<div class="grid two-col settings-grid">
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
@@ -391,15 +395,24 @@ async function settings() {
         <button class="button primary" type="submit">Save settings</button>
       </form>
     </article>
-    ${workspace?.kind !== "demo" && state.configuration.database_backend === "postgresql" ? `<article class="card settings-card">
+    ${showSharedDriveCard ? `<article class="card settings-card">
       <div class="card-header"><div><h2>Add a Shared Drive</h2><p>Index a Shared Drive your connected Google account can access, as its own workspace.</p></div></div>
-      <form class="review-form" id="add-shared-drive-form">
-        <label>Shared Drive URL or ID<input name="drive" placeholder="https://drive.google.com/drive/folders/..." required></label>
+      ${sharedDriveCandidates === null
+        ? `<p class="muted">Connect Live Drive to Google first to see Shared Drives you can add.</p>`
+        : sharedDriveCandidates.length === 0
+        ? `<p class="muted">No more Shared Drives to add — either your account can't see any, or they're all already added.</p>`
+        : `<form class="review-form" id="add-shared-drive-form">
+        <label>Shared Drive
+          <select name="drive" required>
+            <option value="" disabled selected>Select a Shared Drive</option>
+            ${sharedDriveCandidates.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}
+          </select>
+        </label>
         <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
         <p class="muted small">Uses the Google account already connected to Live Drive. After adding, pick it from the workspace selector above and click Connect Drive to authorize indexing for it.</p>
         <button class="button primary" type="submit">Add Shared Drive</button>
       </form>
-      <p class="field-error" id="add-shared-drive-error" hidden></p>
+      <p class="field-error" id="add-shared-drive-error" hidden></p>`}
     </article>` : ""}
   </div>`;
   document.querySelector("#add-shared-drive-form")?.addEventListener("submit", async event => {

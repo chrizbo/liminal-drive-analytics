@@ -580,6 +580,48 @@ def test_add_shared_drive_workspace_requires_live_connection(monkeypatch, tmp_pa
     assert "Connect Live Drive" in response.json()["detail"]
 
 
+def test_list_shared_drive_candidates_excludes_already_added(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted-candidates.db")
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+    monkeypatch.setattr(api, "_load_hosted_credentials", lambda conn, workspace: "fake-creds")
+
+    seed_conn = db.connect(hosted_path)
+    db.init(seed_conn)
+    db.ensure_service_context(seed_conn, {
+        "id": "shared:drive-1",
+        "tenant_id": db.LOCAL_TENANT_ID,
+        "tenant_name": "Local development",
+        "tenant_kind": "local",
+        "name": "Already Added",
+        "kind": "shared",
+        "source_id": "drive-1",
+    })
+    seed_conn.close()
+
+    class FakeDrives:
+        def list(self, pageSize=None, pageToken=None, fields=None):
+            assert pageToken is None
+            return self
+
+        def execute(self):
+            return {"drives": [
+                {"id": "drive-1", "name": "Already Added"},
+                {"id": "drive-2", "name": "Marketing"},
+            ]}
+
+    class FakeDriveService:
+        def drives(self):
+            return FakeDrives()
+
+    monkeypatch.setattr(api, "build_services", lambda creds: (FakeDriveService(), None, None, None, None))
+
+    response = TestClient(api.app).get("/workspaces/shared-drive/candidates")
+
+    assert response.status_code == 200
+    assert response.json() == [{"id": "drive-2", "name": "Marketing"}]
+
+
 def test_load_hosted_credentials_decrypts_stored_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "hosted-creds.db"))
     workspace = {"id": "live", "tenant_id": db.LOCAL_TENANT_ID, "name": "Live Drive", "kind": "live"}

@@ -324,15 +324,7 @@ def workspaces():
     return [_public_workspace(workspace) for workspace in available_workspaces()]
 
 
-class SharedDriveConnectRequest(BaseModel):
-    drive: str
-    name: Optional[str] = None
-
-
-@app.post("/workspaces/shared-drive", dependencies=[Depends(require_write_token)])
-def add_shared_drive_workspace(body: SharedDriveConnectRequest):
-    if not db.service_database_url():
-        raise HTTPException(status_code=400, detail="Shared Drive workspaces require the hosted database")
+def _live_drive_service():
     live_workspace = _workspace_by_id("live")
     conn = connect_service_database()
     try:
@@ -344,7 +336,52 @@ def add_shared_drive_workspace(body: SharedDriveConnectRequest):
                 status_code=400,
                 detail="Connect Live Drive to Google first, then add a Shared Drive",
             ) from exc
-        drive_svc, _, _, _, _ = build_services(creds)
+    finally:
+        conn.close()
+    drive_svc, _, _, _, _ = build_services(creds)
+    return drive_svc
+
+
+@app.get("/workspaces/shared-drive/candidates")
+def list_shared_drive_candidates():
+    if not db.service_database_url():
+        raise HTTPException(status_code=400, detail="Shared Drive workspaces require the hosted database")
+    drive_svc = _live_drive_service()
+    conn = connect_service_database()
+    try:
+        init(conn)
+        existing_ids = {row["source_id"] for row in db.list_shared_workspaces(conn, db.LOCAL_TENANT_ID)}
+    finally:
+        conn.close()
+    drives, page_token = [], None
+    while True:
+        resp = drive_svc.drives().list(
+            pageSize=100, pageToken=page_token, fields="nextPageToken,drives(id,name)",
+        ).execute()
+        drives.extend(resp.get("drives", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return [
+        {"id": drive["id"], "name": drive["name"]}
+        for drive in drives
+        if drive["id"] not in existing_ids
+    ]
+
+
+class SharedDriveConnectRequest(BaseModel):
+    drive: str
+    name: Optional[str] = None
+
+
+@app.post("/workspaces/shared-drive", dependencies=[Depends(require_write_token)])
+def add_shared_drive_workspace(body: SharedDriveConnectRequest):
+    if not db.service_database_url():
+        raise HTTPException(status_code=400, detail="Shared Drive workspaces require the hosted database")
+    drive_svc = _live_drive_service()
+    conn = connect_service_database()
+    try:
+        init(conn)
         try:
             resolved = resolve_shared_drive(drive_svc, body.drive)
         except Exception as exc:
