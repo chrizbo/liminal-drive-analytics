@@ -1328,4 +1328,18 @@ def ontology_drift(threshold: float = 0.4):
     ]
 
 
-app.mount("/assets", StaticFiles(directory=WEB_DIR), name="web-assets")
+class RevalidatingStaticFiles(StaticFiles):
+    """Serve static assets with no-cache so deploys are visible without a hard refresh.
+
+    The ETag/Last-Modified StaticFiles already sets still let browsers skip
+    the download on a normal reload; this just stops them skipping the
+    revalidation request itself.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/assets", RevalidatingStaticFiles(directory=WEB_DIR), name="web-assets")
