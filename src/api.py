@@ -26,7 +26,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -540,10 +540,9 @@ def google_connection_oauth_callback(request: Request, code: Optional[str] = Non
             "crawl_health": "healthy",
             "failure_reason": None,
         })
-        connection = google_connection_row(conn, from_workspace(workspace))
     finally:
         conn.close()
-    return _public_google_connection(connection, workspace)
+    return RedirectResponse(url=f"/?workspace={workspace['id']}#settings")
 
 
 @app.post("/google-connection/disconnect", dependencies=[Depends(require_write_token)])

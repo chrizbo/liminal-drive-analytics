@@ -499,17 +499,18 @@ def test_google_oauth_callback_stores_encrypted_connection(monkeypatch, tmp_path
     monkeypatch.setattr(api, "build_services", lambda creds: (FakeDrive(), None, None, None, None))
     monkeypatch.setattr(api, "encrypt_text", lambda plaintext, aad=None: f"encrypted:{aad}:{plaintext}")
 
-    response = TestClient(api.app).get(
+    response = TestClient(api.app, follow_redirects=False).get(
         f"/google-connection/oauth/callback?code=oauth-code&state={state}"
     )
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "connected"
-    assert response.json()["account_email"] == "owner@example.com"
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "/?workspace=live#settings"
     conn = db.connect()
     row = conn.execute("SELECT * FROM google_connections").fetchone()
     workspace = conn.execute("SELECT * FROM workspaces WHERE id='live'").fetchone()
     conn.close()
+    assert row["status"] == "connected"
+    assert row["account_email"] == "owner@example.com"
     assert row["token_encrypted"].startswith("encrypted:tenant:local:live:google")
     assert row["token_version"].startswith("kms:projects/p/")
     assert workspace["crawl_health"] == "healthy"
