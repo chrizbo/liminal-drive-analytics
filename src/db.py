@@ -547,6 +547,17 @@ def update_workspace_crawl_state(conn, tenant_id, workspace_id, values):
     conn.commit()
 
 
+def list_shared_workspaces(conn, tenant_id):
+    """Hosted Shared Drive workspaces a tenant has added, beyond demo/live."""
+    rows = execute(conn, """
+        SELECT id, name, source_id
+        FROM workspaces
+        WHERE tenant_id = ? AND kind = 'shared'
+        ORDER BY name
+    """, (tenant_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def workspace_state(conn, tenant_id, workspace_id):
     row = execute(conn, """
         SELECT indexed_at, last_successful_crawl_at, last_attempted_crawl_at,

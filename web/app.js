@@ -391,7 +391,39 @@ async function settings() {
         <button class="button primary" type="submit">Save settings</button>
       </form>
     </article>
+    ${workspace?.kind !== "demo" && state.configuration.database_backend === "postgresql" ? `<article class="card settings-card">
+      <div class="card-header"><div><h2>Add a Shared Drive</h2><p>Index a Shared Drive your connected Google account can access, as its own workspace.</p></div></div>
+      <form class="review-form" id="add-shared-drive-form">
+        <label>Shared Drive URL or ID<input name="drive" placeholder="https://drive.google.com/drive/folders/..." required></label>
+        <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
+        <p class="muted small">Uses the Google account already connected to Live Drive. After adding, pick it from the workspace selector above and click Connect Drive to authorize indexing for it.</p>
+        <button class="button primary" type="submit">Add Shared Drive</button>
+      </form>
+      <p class="field-error" id="add-shared-drive-error" hidden></p>
+    </article>` : ""}
   </div>`;
+  document.querySelector("#add-shared-drive-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const errorEl = document.querySelector("#add-shared-drive-error");
+    if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to add a Shared Drive")) return;
+    const form = new FormData(event.target);
+    try {
+      const result = await api("/workspaces/shared-drive", {
+        method: "POST",
+        body: JSON.stringify({ drive: form.get("drive"), name: form.get("name") || null }),
+      });
+      await loadWorkspaces();
+      state.workspace = result.id;
+      localStorage.setItem("liminal-workspace", state.workspace);
+      state.cache.clear();
+      toast(`Added "${result.name}" — select it above and connect it to Google Drive`);
+      render();
+    } catch (error) {
+      if (errorEl) { errorEl.textContent = error.message; errorEl.hidden = false; }
+      else toast(error.message);
+    }
+  });
   document.querySelector("#openai-model-choice").onchange = event => {
     document.querySelector("#openai-model-custom-wrap").hidden = event.target.value !== "custom";
   };

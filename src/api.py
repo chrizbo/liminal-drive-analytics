@@ -57,7 +57,7 @@ from operations import (
     detect_findings, generate_brief, get_brief, get_finding, latest_brief, list_findings,
     refresh_findings, update_review,
 )
-from sources import load_sources
+from sources import load_sources, resolve_shared_drive
 from auth import SCOPES, build_services, build_web_oauth_flow, credentials_from_json
 from credential_crypto import KMS_KEY_ENV, decrypt_text, encrypt_text
 import indexer
@@ -124,6 +124,19 @@ def available_workspaces():
                 "source_id": source["id"],
                 "indexed_at": source.get("indexed_at"),
             })
+    if db.service_database_url():
+        conn = connect_service_database()
+        try:
+            init(conn)
+            for row in db.list_shared_workspaces(conn, db.LOCAL_TENANT_ID):
+                workspaces.append({
+                    "id": row["id"], "name": row["name"], "kind": "shared",
+                    "database_path": None, "tenant_id": db.LOCAL_TENANT_ID,
+                    "tenant_name": "Local development", "tenant_kind": "local",
+                    "source_id": row["source_id"],
+                })
+        finally:
+            conn.close()
     return workspaces
 
 
@@ -309,6 +322,47 @@ def load_config():
 @app.get("/workspaces")
 def workspaces():
     return [_public_workspace(workspace) for workspace in available_workspaces()]
+
+
+class SharedDriveConnectRequest(BaseModel):
+    drive: str
+    name: Optional[str] = None
+
+
+@app.post("/workspaces/shared-drive", dependencies=[Depends(require_write_token)])
+def add_shared_drive_workspace(body: SharedDriveConnectRequest):
+    if not db.service_database_url():
+        raise HTTPException(status_code=400, detail="Shared Drive workspaces require the hosted database")
+    live_workspace = _workspace_by_id("live")
+    conn = connect_service_database()
+    try:
+        init(conn)
+        try:
+            creds = _load_hosted_credentials(conn, live_workspace)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Connect Live Drive to Google first, then add a Shared Drive",
+            ) from exc
+        drive_svc, _, _, _, _ = build_services(creds)
+        try:
+            resolved = resolve_shared_drive(drive_svc, body.drive)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not resolve Shared Drive: {exc}") from exc
+        workspace_id = f"shared:{resolved['id']}"
+        name = (body.name or "").strip() or resolved["name"]
+        db.ensure_service_context(conn, {
+            "id": workspace_id,
+            "tenant_id": db.LOCAL_TENANT_ID,
+            "tenant_name": "Local development",
+            "tenant_kind": "local",
+            "name": name,
+            "kind": "shared",
+            "source_id": resolved["id"],
+        })
+    finally:
+        conn.close()
+    return {"id": workspace_id, "name": name, "kind": "shared", "source_id": resolved["id"]}
 
 
 @app.get("/tenants")

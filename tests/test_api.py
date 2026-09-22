@@ -53,8 +53,9 @@ def test_configuration_reports_write_token_requirement(monkeypatch):
     assert client.get("/configuration").json()["write_token_required"] is True
 
 
-def test_configuration_reports_postgres_backend(monkeypatch):
+def test_configuration_reports_postgres_backend(monkeypatch, tmp_path):
     monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://localhost/drive_analytics")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(str(tmp_path / "hosted.db")))
     result = TestClient(api.app).get("/configuration").json()
     assert result["database_backend"] == "postgresql"
 
@@ -514,6 +515,69 @@ def test_google_oauth_callback_stores_encrypted_connection(monkeypatch, tmp_path
     assert row["token_encrypted"].startswith("encrypted:tenant:local:live:google")
     assert row["token_version"].startswith("kms:projects/p/")
     assert workspace["crawl_health"] == "healthy"
+
+
+def test_available_workspaces_includes_hosted_shared_workspaces(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted.db")
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+
+    seed_conn = db.connect(hosted_path)
+    db.init(seed_conn)
+    db.ensure_service_context(seed_conn, {
+        "id": "shared:drive-1",
+        "tenant_id": db.LOCAL_TENANT_ID,
+        "tenant_name": "Local development",
+        "tenant_kind": "local",
+        "name": "Marketing Shared Drive",
+        "kind": "shared",
+        "source_id": "drive-1",
+    })
+    seed_conn.close()
+
+    shared = next(w for w in api.available_workspaces() if w["id"] == "shared:drive-1")
+    assert shared["kind"] == "shared"
+    assert shared["name"] == "Marketing Shared Drive"
+    assert shared["source_id"] == "drive-1"
+
+
+def test_add_shared_drive_workspace_creates_hosted_workspace(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted-add.db")
+    monkeypatch.delenv("DRIVE_ANALYTICS_WRITE_TOKEN", raising=False)
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+    monkeypatch.setattr(api, "_load_hosted_credentials", lambda conn, workspace: "fake-creds")
+    monkeypatch.setattr(api, "build_services", lambda creds: ("fake-drive-svc", None, None, None, None))
+    monkeypatch.setattr(
+        api, "resolve_shared_drive",
+        lambda drive_svc, value: {"id": "drive-42", "name": "Marketing"},
+    )
+
+    response = TestClient(api.app).post(
+        "/workspaces/shared-drive",
+        json={"drive": "https://drive.google.com/drive/folders/drive-42"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "shared:drive-42", "name": "Marketing", "kind": "shared", "source_id": "drive-42",
+    }
+    assert any(w["id"] == "shared:drive-42" for w in api.available_workspaces())
+
+
+def test_add_shared_drive_workspace_requires_live_connection(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted-add-2.db")
+    monkeypatch.delenv("DRIVE_ANALYTICS_WRITE_TOKEN", raising=False)
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+
+    response = TestClient(api.app).post(
+        "/workspaces/shared-drive",
+        json={"drive": "https://drive.google.com/drive/folders/drive-42"},
+    )
+
+    assert response.status_code == 400
+    assert "Connect Live Drive" in response.json()["detail"]
 
 
 def test_load_hosted_credentials_decrypts_stored_connection(monkeypatch, tmp_path):
