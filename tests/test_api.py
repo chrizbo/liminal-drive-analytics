@@ -517,6 +517,81 @@ def test_google_oauth_callback_stores_encrypted_connection(monkeypatch, tmp_path
     assert workspace["crawl_health"] == "healthy"
 
 
+def test_google_oauth_connects_the_whole_tenant_not_just_one_workspace(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted-oauth.db")
+    monkeypatch.setenv(api.APP_SESSION_SECRET_ENV, "state-secret")
+    monkeypatch.setenv(api.BASE_URL_ENV, "https://liminal.example")
+    monkeypatch.setenv(api.KMS_KEY_ENV, "projects/p/locations/l/keyRings/r/cryptoKeys/k")
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+
+    seed_conn = db.connect(hosted_path)
+    db.init(seed_conn)
+    db.ensure_service_context(seed_conn, {
+        "id": "shared:drive-9", "tenant_id": db.LOCAL_TENANT_ID,
+        "tenant_name": "Local development", "tenant_kind": "local",
+        "name": "Marketing", "kind": "shared", "source_id": "drive-9",
+    })
+    seed_conn.close()
+
+    state = api._sign_oauth_state({
+        "v": 1, "tenant_id": db.LOCAL_TENANT_ID, "workspace_id": "shared:drive-9",
+        "iat": int(time.time()),
+    })
+
+    class FakeCredentials:
+        scopes = ["scope-a"]
+
+        def to_json(self):
+            return "token-json-blob"
+
+    class FakeFlow:
+        credentials = FakeCredentials()
+
+        def fetch_token(self, code):
+            pass
+
+    class FakeAbout:
+        def get(self, fields):
+            return self
+
+        def execute(self):
+            return {"user": {"emailAddress": "owner@example.com"}}
+
+    class FakeDrive:
+        def about(self):
+            return FakeAbout()
+
+    stored = {}
+
+    def fake_encrypt(plaintext, aad=None):
+        stored[aad] = plaintext
+        return f"cipher::{aad}"
+
+    def fake_decrypt(ciphertext, aad=None):
+        assert ciphertext == f"cipher::{aad}"
+        return stored[aad]
+
+    monkeypatch.setattr(api, "build_web_oauth_flow", lambda redirect_uri, state=None: FakeFlow())
+    monkeypatch.setattr(api, "build_services", lambda creds: (FakeDrive(), None, None, None, None))
+    monkeypatch.setattr(api, "encrypt_text", fake_encrypt)
+    monkeypatch.setattr(api, "decrypt_text", fake_decrypt)
+    monkeypatch.setattr(api, "credentials_from_json", lambda token_json: token_json)
+
+    response = TestClient(api.app, follow_redirects=False).get(
+        f"/google-connection/oauth/callback?code=oauth-code&state={state}"
+    )
+    assert response.status_code in (302, 307)
+
+    # Connecting from the Shared Drive workspace should make Live Drive (a
+    # different workspace under the same tenant) see the same connection.
+    live_workspace = {"id": "live", "tenant_id": db.LOCAL_TENANT_ID, "name": "Live Drive", "kind": "live"}
+    conn = db.connect(hosted_path)
+    creds = api._load_hosted_credentials(conn, live_workspace)
+    conn.close()
+    assert creds == "token-json-blob"
+
+
 def test_available_workspaces_includes_hosted_shared_workspaces(monkeypatch, tmp_path):
     hosted_path = str(tmp_path / "hosted.db")
     monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
@@ -577,7 +652,7 @@ def test_add_shared_drive_workspace_requires_live_connection(monkeypatch, tmp_pa
     )
 
     assert response.status_code == 400
-    assert "Connect Live Drive" in response.json()["detail"]
+    assert "Connect your Google account" in response.json()["detail"]
 
 
 def test_list_shared_drive_candidates_excludes_already_added(monkeypatch, tmp_path):

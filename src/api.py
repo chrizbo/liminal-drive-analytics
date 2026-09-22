@@ -262,6 +262,18 @@ def _credential_aad(tenant_id, workspace_id, provider="google"):
     return f"{tenant_id}:{workspace_id}:{provider}"
 
 
+# The Google connection is one per tenant, not per workspace — a person
+# connects their account once and every workspace under that tenant (Live
+# Drive, and any Shared Drive/folder workspaces) shares it. Rows are stored
+# under this fixed workspace id regardless of which workspace initiated the
+# connect, so lookups and the KMS AAD stay consistent everywhere.
+TENANT_CONNECTION_WORKSPACE_ID = "live"
+
+
+def _tenant_connection_scope(workspace):
+    return from_workspace({"tenant_id": workspace["tenant_id"], "id": TENANT_CONNECTION_WORKSPACE_ID})
+
+
 class ReviewUpdate(BaseModel):
     status: Optional[str] = None
     disposition: Optional[str] = None
@@ -334,7 +346,7 @@ def _live_drive_service():
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="Connect Live Drive to Google first, then add a Shared Drive",
+                detail="Connect your Google account first, then add a Shared Drive",
             ) from exc
     finally:
         conn.close()
@@ -545,7 +557,7 @@ def google_connection():
     workspace = active_workspace.get()
     conn = get_conn()
     try:
-        connection = google_connection_row(conn, current_scope())
+        connection = google_connection_row(conn, _tenant_connection_scope(workspace))
     finally:
         conn.close()
     return _public_google_connection(connection, workspace)
@@ -603,7 +615,7 @@ def google_connection_oauth_callback(request: Request, code: Optional[str] = Non
         account_email = about.get("user", {}).get("emailAddress")
         token_encrypted = encrypt_text(
             creds.to_json(),
-            aad=_credential_aad(workspace["tenant_id"], workspace["id"]),
+            aad=_credential_aad(workspace["tenant_id"], TENANT_CONNECTION_WORKSPACE_ID),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -611,7 +623,7 @@ def google_connection_oauth_callback(request: Request, code: Optional[str] = Non
     now = _utc_now()
     conn = get_conn_for_workspace(workspace)
     try:
-        existing = google_connection_row(conn, from_workspace(workspace))
+        existing = google_connection_row(conn, _tenant_connection_scope(workspace))
         upsert_google_connection(conn, {
             "id": existing["id"] if existing else str(uuid.uuid4()),
             "account_email": account_email,
@@ -626,7 +638,7 @@ def google_connection_oauth_callback(request: Request, code: Optional[str] = Non
             "error": None,
             "created_at": existing["created_at"] if existing else now,
             "updated_at": now,
-        }, from_workspace(workspace))
+        }, _tenant_connection_scope(workspace))
         db.update_workspace_crawl_state(conn, workspace["tenant_id"], workspace["id"], {
             "crawl_health": "healthy",
             "failure_reason": None,
@@ -644,7 +656,8 @@ def google_connection_disconnect():
     now = _utc_now()
     conn = get_conn()
     try:
-        existing = google_connection_row(conn, current_scope())
+        tenant_scope = _tenant_connection_scope(workspace)
+        existing = google_connection_row(conn, tenant_scope)
         upsert_google_connection(conn, {
             "id": existing["id"] if existing else str(uuid.uuid4()),
             "account_email": existing.get("account_email") if existing else None,
@@ -659,7 +672,7 @@ def google_connection_disconnect():
             "error": None,
             "created_at": existing["created_at"] if existing else now,
             "updated_at": now,
-        }, current_scope())
+        }, tenant_scope)
         schedule = crawl_schedule_row(conn, current_scope())
         if schedule:
             upsert_crawl_schedule(conn, {
@@ -851,12 +864,12 @@ def _reconcile_orphaned_indexing_job(conn, workspace, job, scope):
 
 
 def _load_hosted_credentials(conn, workspace):
-    connection_row = google_connection_credential_row(conn, from_workspace(workspace))
+    connection_row = google_connection_credential_row(conn, _tenant_connection_scope(workspace))
     if not connection_row or connection_row.get("status") != "connected" or not connection_row.get("token_encrypted"):
-        raise RuntimeError("Google Drive is not connected for this workspace")
+        raise RuntimeError("Google Drive is not connected for this account")
     token_json = decrypt_text(
         connection_row["token_encrypted"],
-        aad=_credential_aad(workspace["tenant_id"], workspace["id"]),
+        aad=_credential_aad(workspace["tenant_id"], TENANT_CONNECTION_WORKSPACE_ID),
     )
     return credentials_from_json(token_json)
 

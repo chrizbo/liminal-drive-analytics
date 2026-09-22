@@ -4,7 +4,8 @@ These are important ideas, but they should not block the user-research MVP.
 
 ## Access and Admin Models
 
-- Workspace admin/domain-wide delegation for durable org-managed access.
+- Workspace admin/domain-wide delegation for durable org-managed access. Research (2026-09) confirms this is the right later tier, not a default: a Super Admin must authorize it per customer domain (it doesn't remove the "someone has to act" step, it changes what they authorize), it cannot reach personal Gmail accounts, and Google now requires multi-party approval for it because a single leaked key can read the whole domain.
+- Preferred enterprise path over domain-wide delegation: a per-tenant Cloud service account that the Workspace admin or team lead adds as a member of each specific Shared Drive (directly or via a Google Group), the same way they'd share it with a coworker. No OAuth screen at all, smaller blast radius than domain-wide delegation, and it matches Liminal's own principle of treating the selected Drive scope as a product boundary — Google's sharing model enforces the boundary instead of app-level discipline.
 - Granular Drive permission mirroring inside Liminal.
 - Customer-managed encryption keys for enterprise customers.
 - More advanced admin audit logs.

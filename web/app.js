@@ -353,6 +353,7 @@ async function settings() {
           ${state.token ? `<button class="link-button" type="button" data-reset-token>Reset saved token</button>` : ""}
         </div>`}
       </div>
+      ${workspace?.kind === "demo" ? "" : `<p class="muted small">This connects your Google account once — every workspace here (Live Drive and any Shared Drives you add) shares it, so disconnecting here disconnects all of them.</p>`}
       ${workspace?.kind === "demo" ? "" : `<p class="field-error" id="drive-connect-error" hidden></p>`}
       ${workspace?.kind === "demo"
         ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>`
@@ -409,7 +410,7 @@ async function settings() {
           </select>
         </label>
         <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
-        <p class="muted small">Uses the Google account already connected to Live Drive. After adding, pick it from the workspace selector above and click Connect Drive to authorize indexing for it.</p>
+        <p class="muted small">Uses the Google account already connected above — no separate authorization needed. After adding, pick it from the workspace selector and click Index Drive.</p>
         <button class="button primary" type="submit">Add Shared Drive</button>
       </form>
       <p class="field-error" id="add-shared-drive-error" hidden></p>`}
@@ -430,7 +431,7 @@ async function settings() {
       state.workspace = result.id;
       localStorage.setItem("liminal-workspace", state.workspace);
       state.cache.clear();
-      toast(`Added "${result.name}" — select it above and connect it to Google Drive`);
+      toast(`Added "${result.name}" — select it above and click Index Drive`);
       render();
     } catch (error) {
       if (errorEl) { errorEl.textContent = error.message; errorEl.hidden = false; }
