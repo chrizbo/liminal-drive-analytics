@@ -291,7 +291,6 @@ async function external() {
   app.innerHTML = `<div class="grid two-col"><article class="card"><div class="card-header"><div><h2>External system footprint</h2><p>Links grouped by apex domain</p></div></div><div class="bar-chart">${bars || empty("No external links found.")}</div></article><article class="card table-wrap"><div class="card-header"><div><h2>All domains</h2><p>Detailed destination inventory</p></div></div><table><thead><tr><th>Domain</th><th>Links</th></tr></thead><tbody>${rows}</tbody></table></article></div>`;
 }
 
-const OPENAI_MODEL_OPTIONS = ["gpt-5.4-mini", "gpt-5.4"];
 const SCHEDULE_DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 function parseCron(cron) {
   const parts = String(cron || "0 3 * * *").trim().split(/\s+/);
@@ -333,14 +332,12 @@ async function settings() {
   const running = ["queued", "running"].includes(job.status);
   const connectedAccount = connection.account_email || connection.status || "Disconnected";
   const connectLabel = connection.status === "connected" || connection.account_email ? "Reconnect Drive" : "Connect Drive";
-  const configuredModel = state.configuration.openai_model || "gpt-5.4-mini";
-  const modelIsCustom = !OPENAI_MODEL_OPTIONS.includes(configuredModel);
   const showSharedDriveCard = workspace?.kind !== "demo" && state.configuration.database_backend === "postgresql";
   const sharedDriveCandidates = showSharedDriveCard
     ? await api("/workspaces/shared-drive/candidates").catch(() => null)
     : null;
   const isManageableWorkspace = workspace?.kind === "shared" || workspace?.kind === "folder";
-  app.innerHTML = `<div class="grid two-col settings-grid">
+  app.innerHTML = `<div class="grid one-col settings-grid">
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
       <div class="settings-workspace"><span>Selected workspace</span><strong>${esc(workspace?.name || "")}</strong></div>
@@ -408,21 +405,6 @@ async function settings() {
             <button class="button dark" data-delete-workspace>Delete workspace</button>` : ""}
           </div>`}
     </article>
-    <article class="card settings-card">
-      <div class="card-header"><div><h2>Analysis settings</h2><p>Parameters used when classifying external resources and polishing briefs.</p></div></div>
-      <form class="review-form" id="settings-form">
-        <label>OpenAI model
-          <select name="openai_model_choice" id="openai-model-choice">
-            ${OPENAI_MODEL_OPTIONS.map(m => `<option value="${m}" ${configuredModel === m ? "selected" : ""}>${m}</option>`).join("")}
-            <option value="custom" ${modelIsCustom ? "selected" : ""}>Custom…</option>
-          </select>
-        </label>
-        <label id="openai-model-custom-wrap" ${modelIsCustom ? "" : "hidden"}>Custom model name<input name="openai_model_custom" value="${esc(modelIsCustom ? configuredModel : "")}"></label>
-        <label>Path-significant domains<textarea name="path_significant_domains" placeholder="One domain per line">${esc((state.configuration.path_significant_domains || []).join("\n"))}</textarea></label>
-        <p class="muted">Paths are preserved for these domains during the next index. Re-index to apply changes.</p>
-        <button class="button primary" type="submit">Save settings</button>
-      </form>
-    </article>
   </div>`;
   document.querySelector("#add-shared-drive-form")?.addEventListener("submit", async event => {
     event.preventDefault();
@@ -446,25 +428,6 @@ async function settings() {
       else toast(error.message);
     }
   });
-  document.querySelector("#openai-model-choice").onchange = event => {
-    document.querySelector("#openai-model-custom-wrap").hidden = event.target.value !== "custom";
-  };
-  document.querySelector("#settings-form").onsubmit = async event => {
-    event.preventDefault();
-    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to save settings")) return;
-    const form = new FormData(event.target);
-    const domains = String(form.get("path_significant_domains") || "").split("\n").map(x => x.trim()).filter(Boolean);
-    const modelChoice = form.get("openai_model_choice");
-    const openaiModel = modelChoice === "custom" ? (form.get("openai_model_custom") || "").trim() : modelChoice;
-    try {
-      state.configuration = await api("/configuration", {
-        method: "PATCH",
-        body: JSON.stringify({ openai_model: openaiModel, path_significant_domains: domains }),
-      });
-      toast("Settings saved");
-      settings();
-    } catch (error) { toast(error.message); }
-  };
   const scheduleForm = document.querySelector("#schedule-form");
   if (scheduleForm) {
     document.querySelector("#schedule-frequency").onchange = event => {
