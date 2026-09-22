@@ -236,6 +236,8 @@ dialog::backdrop { background: rgba(32,33,36,.32); }
 .crawl-state span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .crawl-state strong { display: block; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; text-transform: capitalize; }
 .crawl-state p { grid-column: 1 / -1; margin: 0; color: #9f3931; font-size: 12px; }
+.shared-drive-scope { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.shared-drive-scope form { margin-top: 8px; }
 .schedule-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .schedule-form .button { align-self: flex-start; }
 .danger-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }

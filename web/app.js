@@ -359,6 +359,27 @@ async function settings() {
       </div>
       ${workspace?.kind === "demo" ? "" : `<p class="muted small">This connects your Google account once — every workspace here (Live Drive and any Shared Drives you add) shares it, so disconnecting here disconnects all of them.</p>`}
       ${workspace?.kind === "demo" ? "" : `<p class="field-error" id="drive-connect-error" hidden></p>`}
+      ${showSharedDriveCard ? `<div class="shared-drive-scope">
+        <div class="settings-workspace"><span>Add another Shared Drive</span></div>
+        ${sharedDriveCandidates === null
+          ? `<p class="muted">Connect your Google account above to see Shared Drives you can add.</p>`
+          : sharedDriveCandidates.length === 0
+          ? `<p class="muted">No more Shared Drives to add as their own workspace — either your account can't see any, or they're all already added.</p>`
+          : `<form class="review-form" id="add-shared-drive-form">
+        <label>Shared Drive
+          <select name="drive" required>
+            <option value="" disabled selected>Select a Shared Drive</option>
+            ${sharedDriveCandidates.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
+        <p class="muted small">${workspace.kind === "live"
+          ? `"Index Drive" below only reaches your personal My Drive files, never Shared Drives. To index a Shared Drive on its own, add it here as its own workspace, then select it above.`
+          : `Adding a Shared Drive here creates a separate workspace for it, so it stays isolated from "${esc(workspace.name)}". Select it above once added.`}</p>
+        <button class="button dark" type="submit">Add Shared Drive</button>
+      </form>
+      <p class="field-error" id="add-shared-drive-error" hidden></p>`}
+      </div>` : ""}
       ${workspace?.kind === "demo"
         ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>`
         : `<p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
@@ -402,25 +423,6 @@ async function settings() {
         <button class="button primary" type="submit">Save settings</button>
       </form>
     </article>
-    ${showSharedDriveCard ? `<article class="card settings-card">
-      <div class="card-header"><div><h2>Add a Shared Drive</h2><p>Index a Shared Drive your connected Google account can access, as its own workspace.</p></div></div>
-      ${sharedDriveCandidates === null
-        ? `<p class="muted">Connect Live Drive to Google first to see Shared Drives you can add.</p>`
-        : sharedDriveCandidates.length === 0
-        ? `<p class="muted">No more Shared Drives to add — either your account can't see any, or they're all already added.</p>`
-        : `<form class="review-form" id="add-shared-drive-form">
-        <label>Shared Drive
-          <select name="drive" required>
-            <option value="" disabled selected>Select a Shared Drive</option>
-            ${sharedDriveCandidates.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}
-          </select>
-        </label>
-        <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
-        <p class="muted small">Uses the Google account already connected above — no separate authorization needed. After adding, pick it from the workspace selector and click Index Drive.</p>
-        <button class="button primary" type="submit">Add Shared Drive</button>
-      </form>
-      <p class="field-error" id="add-shared-drive-error" hidden></p>`}
-    </article>` : ""}
   </div>`;
   document.querySelector("#add-shared-drive-form")?.addEventListener("submit", async event => {
     event.preventDefault();
