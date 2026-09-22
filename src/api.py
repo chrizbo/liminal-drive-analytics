@@ -37,7 +37,8 @@ from db import connect, connect_service_database, init
 from storage import (
     active_indexing_job_row, attributed_view_count, document_lookup_maps,
     crawl_schedule_row, from_workspace, indexing_job_row, insert_indexing_job,
-    delete_indexed_workspace_data, external_link_summary, get_document_detail,
+    delete_indexed_workspace_data, delete_workspace_management_rows,
+    external_link_summary, get_document_detail, rename_workspace_row,
     google_connection_row, google_connection_credential_row, insert_analytics_event, list_people,
     latest_indexing_job_row, list_workspace_documents,
     ontology_alignment_rows, ontology_drift_rows,
@@ -716,6 +717,50 @@ def workspace_data_delete():
     finally:
         conn.close()
     return {"deleted": deleted}
+
+
+class WorkspaceRenameRequest(BaseModel):
+    name: str
+
+
+def _require_manageable_workspace(workspace):
+    # Live Drive and the demo workspace are hardcoded entries in
+    # available_workspaces(), not rows read from the database — renaming or
+    # deleting their row wouldn't do anything visible, so only workspaces
+    # someone explicitly added (a Shared Drive or folder) are manageable.
+    if workspace["kind"] not in {"shared", "folder"}:
+        raise HTTPException(status_code=400, detail="Only added Shared Drive/folder workspaces can be managed")
+    if not db.service_database_url():
+        raise HTTPException(status_code=400, detail="Managing workspaces requires the hosted database")
+
+
+@app.patch("/workspace", dependencies=[Depends(require_write_token)])
+def rename_workspace(body: WorkspaceRenameRequest):
+    workspace = active_workspace.get()
+    _require_manageable_workspace(workspace)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Workspace name is required")
+    conn = get_conn()
+    try:
+        rename_workspace_row(conn, workspace["tenant_id"], workspace["id"], name)
+    finally:
+        conn.close()
+    return {"id": workspace["id"], "name": name}
+
+
+@app.delete("/workspace", dependencies=[Depends(require_write_token)])
+def remove_workspace():
+    workspace = active_workspace.get()
+    _require_manageable_workspace(workspace)
+    conn = get_conn()
+    try:
+        deleted = delete_indexed_workspace_data(conn, current_scope())
+        delete_workspace_management_rows(conn, current_scope())
+        db.delete_workspace_row(conn, workspace["tenant_id"], workspace["id"])
+    finally:
+        conn.close()
+    return {"id": workspace["id"], "deleted": True, "indexed_data_deleted": deleted}
 
 
 @app.get("/")

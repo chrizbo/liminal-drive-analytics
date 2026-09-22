@@ -697,6 +697,83 @@ def test_list_shared_drive_candidates_excludes_already_added(monkeypatch, tmp_pa
     assert response.json() == [{"id": "drive-2", "name": "Marketing"}]
 
 
+def _seed_hosted_shared_workspace(hosted_path, workspace_id="shared:drive-1", name="Marketing"):
+    conn = db.connect(hosted_path)
+    db.init(conn)
+    db.ensure_service_context(conn, {
+        "id": workspace_id,
+        "tenant_id": db.LOCAL_TENANT_ID,
+        "tenant_name": "Local development",
+        "tenant_kind": "local",
+        "name": name,
+        "kind": "shared",
+        "source_id": workspace_id.split(":", 1)[1],
+    })
+    conn.close()
+
+
+def test_rename_workspace_updates_hosted_row(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted-rename.db")
+    monkeypatch.delenv("DRIVE_ANALYTICS_WRITE_TOKEN", raising=False)
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+    _seed_hosted_shared_workspace(hosted_path)
+
+    response = TestClient(api.app).patch(
+        "/workspace?workspace=shared:drive-1",
+        json={"name": "Marketing Team Drive"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": "shared:drive-1", "name": "Marketing Team Drive"}
+    names = [w["name"] for w in api.available_workspaces() if w["id"] == "shared:drive-1"]
+    assert names == ["Marketing Team Drive"]
+
+
+def test_rename_workspace_rejects_live_and_demo(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "rename-live.db"))
+    monkeypatch.delenv("DRIVE_ANALYTICS_WRITE_TOKEN", raising=False)
+
+    live = TestClient(api.app).patch("/workspace?workspace=live", json={"name": "Renamed"})
+    demo = TestClient(api.app).patch("/workspace?workspace=demo", json={"name": "Renamed"})
+
+    assert live.status_code == 400
+    assert demo.status_code == 400
+
+
+def test_delete_workspace_removes_row_and_indexed_data(monkeypatch, tmp_path):
+    hosted_path = str(tmp_path / "hosted-delete.db")
+    monkeypatch.delenv("DRIVE_ANALYTICS_WRITE_TOKEN", raising=False)
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+    _seed_hosted_shared_workspace(hosted_path)
+
+    conn = db.connect(hosted_path)
+    conn.execute("""
+        INSERT INTO documents (id, tenant_id, workspace_id, title, modified_at)
+        VALUES ('doc-1', ?, 'shared:drive-1', 'Doc 1', '2026-01-01')
+    """, (db.LOCAL_TENANT_ID,))
+    conn.commit()
+    conn.close()
+
+    response = TestClient(api.app).delete("/workspace?workspace=shared:drive-1")
+
+    assert response.status_code == 200
+    assert response.json()["indexed_data_deleted"]["documents"] == 1
+    assert not any(w["id"] == "shared:drive-1" for w in api.available_workspaces())
+
+
+def test_delete_workspace_rejects_live_and_demo(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "delete-live.db"))
+    monkeypatch.delenv("DRIVE_ANALYTICS_WRITE_TOKEN", raising=False)
+
+    live = TestClient(api.app).delete("/workspace?workspace=live")
+    demo = TestClient(api.app).delete("/workspace?workspace=demo")
+
+    assert live.status_code == 400
+    assert demo.status_code == 400
+
+
 def test_load_hosted_credentials_decrypts_stored_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "hosted-creds.db"))
     workspace = {"id": "live", "tenant_id": db.LOCAL_TENANT_ID, "name": "Live Drive", "kind": "live"}

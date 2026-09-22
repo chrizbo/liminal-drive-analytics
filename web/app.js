@@ -339,10 +339,14 @@ async function settings() {
   const sharedDriveCandidates = showSharedDriveCard
     ? await api("/workspaces/shared-drive/candidates").catch(() => null)
     : null;
+  const isManageableWorkspace = workspace?.kind === "shared" || workspace?.kind === "folder";
   app.innerHTML = `<div class="grid two-col settings-grid">
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
       <div class="settings-workspace"><span>Selected workspace</span><strong>${esc(workspace?.name || "")}</strong></div>
+      ${isManageableWorkspace ? `<form class="review-form rename-form" id="rename-workspace-form">
+        <div class="form-row"><input name="name" value="${esc(workspace.name)}" placeholder="Workspace name" required><button class="button dark" type="submit">Rename</button></div>
+      </form>` : ""}
       ${crawlStateMarkup(workspace)}
       <div class="settings-workspace connection-row">
         <span>Google connection</span>
@@ -379,6 +383,8 @@ async function settings() {
           <div class="danger-actions">
             <p class="muted small">Deletes indexed documents, links, activity, findings, and briefs stored for this workspace. Your Google connection stays intact and nothing changes in Drive itself — re-index afterward to rebuild. This cannot be undone.</p>
             <button class="button dark" data-delete-workspace-data>Delete indexed data</button>
+            ${isManageableWorkspace ? `<p class="muted small">Removes this workspace entirely — its indexed data, schedule, and job history. Live Drive and other workspaces are unaffected, and your Google connection stays intact. This cannot be undone.</p>
+            <button class="button dark" data-delete-workspace>Delete workspace</button>` : ""}
           </div>`}
     </article>
     <article class="card settings-card">
@@ -506,6 +512,31 @@ async function settings() {
       state.cache.clear();
       toast("Indexed data deleted");
       settings();
+    } catch (error) { toast(error.message); }
+  });
+  document.querySelector("#rename-workspace-form")?.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to rename this workspace")) return;
+    const form = new FormData(event.target);
+    try {
+      await api("/workspace", { method: "PATCH", body: JSON.stringify({ name: form.get("name") }) });
+      await loadWorkspaces();
+      state.cache.clear();
+      toast("Workspace renamed");
+      render();
+    } catch (error) { toast(error.message); }
+  });
+  document.querySelector("[data-delete-workspace]")?.addEventListener("click", async () => {
+    if (!confirm(`Delete the "${workspace.name}" workspace? This removes its indexed data, schedule, and job history. This cannot be undone.`)) return;
+    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to delete this workspace")) return;
+    try {
+      await api("/workspace", { method: "DELETE" });
+      state.workspace = "live";
+      localStorage.setItem("liminal-workspace", state.workspace);
+      await loadWorkspaces();
+      state.cache.clear();
+      toast("Workspace deleted");
+      render();
     } catch (error) { toast(error.message); }
   });
 }

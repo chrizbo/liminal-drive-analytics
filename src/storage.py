@@ -870,6 +870,24 @@ def delete_indexed_workspace_data(conn, scope):
     return deleted
 
 
+def rename_workspace_row(conn, tenant_id, workspace_id, name):
+    execute(conn, """
+        UPDATE workspaces SET name = ? WHERE tenant_id = ? AND id = ?
+    """, (name, tenant_id, workspace_id))
+    conn.commit()
+
+
+def delete_workspace_management_rows(conn, scope):
+    """Remove a workspace's schedule and job history. Indexed data
+    (documents, findings, etc.) is deleted separately via
+    delete_indexed_workspace_data, and the Google connection is
+    tenant-wide and never touched here."""
+    scope_sql, scope_params = where_scope(scope)
+    for table in ("crawl_schedules", "indexing_jobs"):
+        execute(conn, f"DELETE FROM {table} {scope_sql}", scope_params)
+    conn.commit()
+
+
 def drift_pair_rows(conn, threshold, scope=None, limit=3):
     rows = execute(conn, """
         SELECT da.src_id, da.dst_id, da.alignment_score, da.divergent_terms,

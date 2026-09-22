@@ -558,6 +558,11 @@ def list_shared_workspaces(conn, tenant_id):
     return [dict(row) for row in rows]
 
 
+def delete_workspace_row(conn, tenant_id, workspace_id):
+    execute(conn, "DELETE FROM workspaces WHERE tenant_id = ? AND id = ?", (tenant_id, workspace_id))
+    conn.commit()
+
+
 def workspace_state(conn, tenant_id, workspace_id):
     row = execute(conn, """
         SELECT indexed_at, last_successful_crawl_at, last_attempted_crawl_at,
