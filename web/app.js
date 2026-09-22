@@ -90,7 +90,8 @@ function compactDate(value) {
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 function crawlStateMarkup(workspace) {
-  const health = workspace?.crawl_health || "unknown";
+  const hasCrawled = Boolean(workspace?.last_successful_crawl_at || workspace?.indexed_at);
+  const health = hasCrawled ? (workspace?.crawl_health || "unknown") : "not_indexed";
   return `<div class="crawl-state">
     <div><span>Health</span><strong>${esc(health.replaceAll("_", " "))}</strong></div>
     <div><span>Last successful crawl</span><strong>${esc(compactDate(workspace?.last_successful_crawl_at || workspace?.indexed_at))}</strong></div>
@@ -128,19 +129,28 @@ function selectedWorkspace() {
 }
 function ensureWriteToken(message) {
   if (!state.writeTokenRequired || state.token) return true;
-  state.token = prompt(message) || "";
+  state.token = (prompt(message) || "").trim();
   if (!state.token) return false;
   localStorage.setItem("liminal-admin-token", state.token);
   return true;
 }
+function resetWriteToken() {
+  state.token = "";
+  localStorage.removeItem("liminal-admin-token");
+  toast("Saved admin token cleared");
+  render();
+}
 async function connectGoogleDrive() {
+  const errorEl = document.querySelector("#drive-connect-error");
+  if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
   if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to connect Google Drive")) return;
   try {
     const result = await api("/google-connection/oauth/start", { method: "POST", body: JSON.stringify({}) });
     if (!result.authorization_url) throw new Error("OAuth start did not return an authorization URL");
     window.location.assign(result.authorization_url);
   } catch (error) {
-    toast(error.message);
+    if (errorEl) { errorEl.textContent = error.message; errorEl.hidden = false; }
+    else toast(error.message);
   }
 }
 function metric(label, value, note, href) {
@@ -281,6 +291,20 @@ async function external() {
   app.innerHTML = `<div class="grid two-col"><article class="card"><div class="card-header"><div><h2>External system footprint</h2><p>Links grouped by apex domain</p></div></div><div class="bar-chart">${bars || empty("No external links found.")}</div></article><article class="card table-wrap"><div class="card-header"><div><h2>All domains</h2><p>Detailed destination inventory</p></div></div><table><thead><tr><th>Domain</th><th>Links</th></tr></thead><tbody>${rows}</tbody></table></article></div>`;
 }
 
+const OPENAI_MODEL_OPTIONS = ["gpt-5.4-mini", "gpt-5.4"];
+const SCHEDULE_DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+function parseCron(cron) {
+  const parts = String(cron || "0 3 * * *").trim().split(/\s+/);
+  const hour = /^\d+$/.test(parts[1]) ? Math.max(0, Math.min(23, Number(parts[1]))) : 3;
+  const dow = parts[4];
+  const frequency = dow && dow !== "*" && /^\d+$/.test(dow) ? "weekly" : "daily";
+  return { hour, frequency, dayOfWeek: frequency === "weekly" ? Number(dow) % 7 : 0 };
+}
+function buildCron({ hour, frequency, dayOfWeek }) {
+  return frequency === "weekly" ? `0 ${hour} * * ${dayOfWeek}` : `0 ${hour} * * *`;
+}
+function hourLabel(hour) { return `${String(hour).padStart(2, "0")}:00`; }
+
 async function settings() {
   let workspace = selectedWorkspace();
   const context = await api("/context").catch(() => null);
@@ -291,6 +315,7 @@ async function settings() {
   const schedule = workspace?.kind === "demo"
     ? { enabled: false, schedule_cron: "0 3 * * *", schedule_timezone: "UTC", crawl_mode: "incremental" }
     : await api("/crawl-schedule").catch(() => ({ enabled: false, schedule_cron: "0 3 * * *", schedule_timezone: "UTC", crawl_mode: "incremental" }));
+  const cron = parseCron(schedule.schedule_cron);
   const connection = workspace?.kind === "demo"
     ? { status: "demo", health: "demo", account_email: null }
     : await api("/google-connection").catch(() => ({ status: "unknown", health: "unknown", account_email: null }));
@@ -300,68 +325,116 @@ async function settings() {
   const running = ["queued", "running"].includes(job.status);
   const connectedAccount = connection.account_email || connection.status || "Disconnected";
   const connectLabel = connection.status === "connected" || connection.account_email ? "Reconnect Drive" : "Connect Drive";
+  const configuredModel = state.configuration.openai_model || "gpt-5.4-mini";
+  const modelIsCustom = !OPENAI_MODEL_OPTIONS.includes(configuredModel);
   app.innerHTML = `<div class="grid two-col settings-grid">
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
       <div class="settings-workspace"><span>Selected workspace</span><strong>${esc(workspace?.name || "")}</strong></div>
       ${crawlStateMarkup(workspace)}
-      <div class="settings-workspace connection-row"><span>Google connection</span><strong>${esc(connectedAccount)}</strong>${workspace?.kind === "demo" ? "" : `<button class="button primary small" data-connect-drive>${esc(connectLabel)}</button>`}</div>
+      <div class="settings-workspace connection-row">
+        <span>Google connection</span>
+        <strong>${esc(connectedAccount)}</strong>
+        ${workspace?.kind === "demo" ? "" : `<div class="connection-actions">
+          <button class="button primary small" data-connect-drive>${esc(connectLabel)}</button>
+          <button class="button dark small" data-disconnect-drive>Disconnect Drive</button>
+          ${state.token ? `<button class="link-button" type="button" data-reset-token>Reset saved token</button>` : ""}
+        </div>`}
+      </div>
+      ${workspace?.kind === "demo" ? "" : `<p class="field-error" id="drive-connect-error" hidden></p>`}
       ${workspace?.kind === "demo"
         ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>`
         : `<p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
           <form class="review-form schedule-form" id="schedule-form">
             <label class="check-row"><input type="checkbox" name="enabled" ${schedule.enabled ? "checked" : ""}> Scheduled crawl</label>
-            <div class="form-row"><input name="schedule_cron" value="${esc(schedule.schedule_cron || "0 3 * * *")}"><input name="schedule_timezone" value="${esc(schedule.schedule_timezone || "UTC")}"></div>
+            <div class="form-row">
+              <select name="frequency" id="schedule-frequency">
+                <option value="daily" ${cron.frequency === "daily" ? "selected" : ""}>Daily</option>
+                <option value="weekly" ${cron.frequency === "weekly" ? "selected" : ""}>Weekly</option>
+              </select>
+              <select name="day_of_week" id="schedule-day" ${cron.frequency === "weekly" ? "" : "disabled"}>
+                ${SCHEDULE_DAY_LABELS.map((label, i) => `<option value="${i}" ${cron.dayOfWeek === i ? "selected" : ""}>${label}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-row">
+              <select name="hour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${cron.hour === h ? "selected" : ""}>${hourLabel(h)}</option>`).join("")}</select>
+              <input name="schedule_timezone" value="${esc(schedule.schedule_timezone || "UTC")}" placeholder="Timezone (e.g. UTC)">
+            </div>
             <select name="crawl_mode">${["incremental","activity_refresh","link_expansion","backfill"].map(mode => `<option value="${mode}" ${mode === schedule.crawl_mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}</select>
             <button class="button dark" type="submit">Save schedule</button>
           </form>
-          <div class="danger-actions"><button class="button dark" data-disconnect-drive>Disconnect Drive</button><button class="button dark" data-delete-workspace-data>Delete indexed data</button></div>`}
+          <div class="danger-actions">
+            <p class="muted small">Deletes indexed documents, links, activity, findings, and briefs stored for this workspace. Your Google connection stays intact and nothing changes in Drive itself — re-index afterward to rebuild. This cannot be undone.</p>
+            <button class="button dark" data-delete-workspace-data>Delete indexed data</button>
+          </div>`}
     </article>
     <article class="card settings-card">
       <div class="card-header"><div><h2>Analysis settings</h2><p>Parameters used when classifying external resources and polishing briefs.</p></div></div>
       <form class="review-form" id="settings-form">
-        <label>OpenAI model<input name="openai_model" value="${esc(state.configuration.openai_model || "gpt-5.4-mini")}"></label>
+        <label>OpenAI model
+          <select name="openai_model_choice" id="openai-model-choice">
+            ${OPENAI_MODEL_OPTIONS.map(m => `<option value="${m}" ${configuredModel === m ? "selected" : ""}>${m}</option>`).join("")}
+            <option value="custom" ${modelIsCustom ? "selected" : ""}>Custom…</option>
+          </select>
+        </label>
+        <label id="openai-model-custom-wrap" ${modelIsCustom ? "" : "hidden"}>Custom model name<input name="openai_model_custom" value="${esc(modelIsCustom ? configuredModel : "")}"></label>
         <label>Path-significant domains<textarea name="path_significant_domains" placeholder="One domain per line">${esc((state.configuration.path_significant_domains || []).join("\n"))}</textarea></label>
         <p class="muted">Paths are preserved for these domains during the next index. Re-index to apply changes.</p>
         <button class="button primary" type="submit">Save settings</button>
       </form>
     </article>
   </div>`;
+  document.querySelector("#openai-model-choice").onchange = event => {
+    document.querySelector("#openai-model-custom-wrap").hidden = event.target.value !== "custom";
+  };
   document.querySelector("#settings-form").onsubmit = async event => {
     event.preventDefault();
     if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to save settings")) return;
     const form = new FormData(event.target);
     const domains = String(form.get("path_significant_domains") || "").split("\n").map(x => x.trim()).filter(Boolean);
+    const modelChoice = form.get("openai_model_choice");
+    const openaiModel = modelChoice === "custom" ? (form.get("openai_model_custom") || "").trim() : modelChoice;
     try {
       state.configuration = await api("/configuration", {
         method: "PATCH",
-        body: JSON.stringify({ openai_model: form.get("openai_model"), path_significant_domains: domains }),
+        body: JSON.stringify({ openai_model: openaiModel, path_significant_domains: domains }),
       });
       toast("Settings saved");
       settings();
     } catch (error) { toast(error.message); }
   };
   const scheduleForm = document.querySelector("#schedule-form");
-  if (scheduleForm) scheduleForm.onsubmit = async event => {
-    event.preventDefault();
-    if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to save schedule")) return;
-    const form = new FormData(event.target);
-    try {
-      await api("/crawl-schedule", {
-        method: "PATCH",
-        body: JSON.stringify({
-          enabled: form.get("enabled") === "on",
-          schedule_cron: form.get("schedule_cron"),
-          schedule_timezone: form.get("schedule_timezone"),
-          crawl_mode: form.get("crawl_mode"),
-        }),
+  if (scheduleForm) {
+    document.querySelector("#schedule-frequency").onchange = event => {
+      document.querySelector("#schedule-day").disabled = event.target.value !== "weekly";
+    };
+    scheduleForm.onsubmit = async event => {
+      event.preventDefault();
+      if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to save schedule")) return;
+      const form = new FormData(event.target);
+      const cronString = buildCron({
+        hour: Number(form.get("hour")),
+        frequency: form.get("frequency"),
+        dayOfWeek: Number(form.get("day_of_week") || 0),
       });
-      state.cache.clear();
-      toast("Schedule saved");
-      settings();
-    } catch (error) { toast(error.message); }
-  };
+      try {
+        await api("/crawl-schedule", {
+          method: "PATCH",
+          body: JSON.stringify({
+            enabled: form.get("enabled") === "on",
+            schedule_cron: cronString,
+            schedule_timezone: form.get("schedule_timezone"),
+            crawl_mode: form.get("crawl_mode"),
+          }),
+        });
+        state.cache.clear();
+        toast("Schedule saved");
+        settings();
+      } catch (error) { toast(error.message); }
+    };
+  }
   document.querySelector("[data-connect-drive]")?.addEventListener("click", connectGoogleDrive);
+  document.querySelector("[data-reset-token]")?.addEventListener("click", resetWriteToken);
   document.querySelector("[data-disconnect-drive]")?.addEventListener("click", async () => {
     if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to disconnect Drive")) return;
     try {
