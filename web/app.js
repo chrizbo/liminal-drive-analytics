@@ -304,6 +304,14 @@ function buildCron({ hour, frequency, dayOfWeek }) {
   return frequency === "weekly" ? `0 ${hour} * * ${dayOfWeek}` : `0 ${hour} * * *`;
 }
 function hourLabel(hour) { return `${String(hour).padStart(2, "0")}:00`; }
+const FALLBACK_TIMEZONES = ["UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Europe/Berlin", "Asia/Kolkata", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney"];
+function timezoneOptions(selected) {
+  let zones;
+  try { zones = Intl.supportedValuesOf("timeZone"); } catch { zones = null; }
+  if (!zones || !zones.length) zones = FALLBACK_TIMEZONES;
+  if (!zones.includes(selected)) zones = [selected, ...zones];
+  return zones.map(zone => `<option value="${esc(zone)}" ${zone === selected ? "selected" : ""}>${esc(zone)}</option>`).join("");
+}
 
 async function settings() {
   let workspace = selectedWorkspace();
@@ -358,7 +366,7 @@ async function settings() {
             </div>
             <div class="form-row">
               <select name="hour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${cron.hour === h ? "selected" : ""}>${hourLabel(h)}</option>`).join("")}</select>
-              <input name="schedule_timezone" value="${esc(schedule.schedule_timezone || "UTC")}" placeholder="Timezone (e.g. UTC)">
+              <select name="schedule_timezone">${timezoneOptions(schedule.schedule_timezone || "UTC")}</select>
             </div>
             <select name="crawl_mode">${["incremental","activity_refresh","link_expansion","backfill"].map(mode => `<option value="${mode}" ${mode === schedule.crawl_mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}</select>
             <button class="button dark" type="submit">Save schedule</button>
