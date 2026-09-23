@@ -362,6 +362,13 @@ def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, n
                 now_str, now_str, scope,
             )
 
+    # Commit the document and its links now, before the activity fetch below.
+    # A failed statement aborts the whole transaction in Postgres (unlike
+    # SQLite), and a later commit on an aborted transaction is treated as a
+    # rollback — silently discarding this file's data. Committing here keeps
+    # the core document/link data safe regardless of what happens next.
+    conn.commit()
+
     # Fetch activity
     try:
         snapshots, person_actions = fetch_activity(activity_svc, file_id)
@@ -370,10 +377,10 @@ def index_file(file_meta, drive_svc, docs_svc, slides_svc, activity_svc, conn, n
         for person_id, action, ts in person_actions:
             ensure_person(conn, person_id, display_name=person_id, scope=scope)
             increment_person_activity(conn, person_id, file_id, action, ts[:19] if ts else "", scope)
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         print(f"    Warning: could not fetch activity for {title}: {e}")
-
-    conn.commit()
 
 
 def fetch_file_meta(drive_svc, file_id):

@@ -182,3 +182,45 @@ def test_run_reports_structured_progress(monkeypatch, tmp_path):
     assert result["files_found"] == 1
     assert any(event["phase"] == "indexing" and event["total"] == 1 for event in events)
     assert events[-1]["phase"] == "complete"
+
+
+def test_index_file_commits_document_before_activity_fetch_and_rolls_back_on_failure(monkeypatch):
+    # Postgres aborts the whole transaction on a failed statement, and a
+    # later commit() on an aborted transaction is treated as a rollback —
+    # silently discarding the file's already-inserted document row. The
+    # document/links must be committed before the activity fetch runs, and
+    # an activity-fetch failure must roll back (not commit) so it can't
+    # poison the connection for later files.
+    calls = []
+
+    class RecordingConn:
+        def commit(self):
+            calls.append("commit")
+
+        def rollback(self):
+            calls.append("rollback")
+
+        def execute(self, sql, params=()):
+            calls.append("execute")
+            class Result:
+                def fetchone(self_inner):
+                    return None
+                def fetchall(self_inner):
+                    return []
+            return Result()
+
+    def boom(activity_svc, file_id):
+        raise RuntimeError("activity API failed")
+
+    monkeypatch.setattr(indexer, "fetch_activity", boom)
+
+    file_meta = {
+        "id": "doc-1", "name": "Doc", "mimeType": "application/vnd.google-apps.document",
+        "owners": [], "createdTime": "", "modifiedTime": "", "webViewLink": "",
+    }
+    conn = RecordingConn()
+    indexer.index_file(file_meta, None, FakeDocs(), None, object(), conn, "2026-01-01T00:00:00Z", False)
+
+    assert calls.count("commit") == 1
+    assert calls.count("rollback") == 1
+    assert calls.index("commit") < calls.index("rollback")
