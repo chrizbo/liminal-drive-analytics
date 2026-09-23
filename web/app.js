@@ -386,7 +386,10 @@ async function settings() {
       <div class="setup-step">
         <div class="setup-step-header"><span class="setup-step-label">Step 3</span><h3>Index</h3></div>
         <p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
-          <form class="review-form schedule-form" id="schedule-form">
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-header"><span class="setup-step-label">Step 4</span><h3>Scheduled runs</h3></div>
+        <form class="review-form schedule-form" id="schedule-form">
             <label class="check-row"><input type="checkbox" name="enabled" ${schedule.enabled ? "checked" : ""}> Scheduled crawl</label>
             <div class="form-row">
               <select name="frequency" id="schedule-frequency">
@@ -403,7 +406,7 @@ async function settings() {
             </div>
             <select name="crawl_mode">${["incremental","activity_refresh","link_expansion","backfill"].map(mode => `<option value="${mode}" ${mode === schedule.crawl_mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}</select>
             <button class="button dark" type="submit">Save schedule</button>
-          </form>
+        </form>
       </div>
       <div class="danger-actions">
         <p class="muted small">Deletes indexed documents, links, activity, findings, and briefs stored for this workspace. Your Google connection stays intact and nothing changes in Drive itself — re-index afterward to rebuild. This cannot be undone.</p>
