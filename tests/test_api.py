@@ -990,6 +990,43 @@ def test_indexing_job_reports_progress_and_completion(monkeypatch, tmp_path):
     assert live_workspace["last_successful_crawl_at"] == workspace["last_successful_crawl_at"]
     assert live_workspace["crawl_health"] == "healthy"
 
+    # A successful index should surface something in Overview automatically,
+    # rather than leaving it empty until someone remembers to click
+    # "Generate digest".
+    brief = client.get("/briefs/latest?workspace=live")
+    assert brief.status_code == 200
+    assert brief.json()["polished"] is None  # deterministic only, no LLM call
+
+
+def test_indexing_job_completes_even_if_auto_digest_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "digest-failure.db"))
+    monkeypatch.setenv("DRIVE_ANALYTICS_WRITE_TOKEN", "secret")
+    api.indexing_jobs.clear()
+
+    def fake_run(days, verbose, expand, **kwargs):
+        return {"source": "Drive", "files_found": 0, "findings": {}}
+
+    def boom(conn, **kwargs):
+        raise RuntimeError("digest generation exploded")
+
+    monkeypatch.setattr(api, "run_indexer", fake_run)
+    monkeypatch.setattr(api, "generate_brief", boom)
+    client = TestClient(api.app)
+    started = client.post(
+        "/indexing/jobs?workspace=live",
+        json={"days": 30, "expand": False},
+        headers={"X-Admin-Token": "secret"},
+    )
+    job_id = started.json()["id"]
+
+    result = None
+    for _ in range(20):
+        result = client.get(f"/indexing/jobs/{job_id}?workspace=live").json()
+        if result["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
+    assert result["status"] == "completed"
+
 
 def test_indexing_job_status_survives_memory_clear(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "durable-indexing.db"))

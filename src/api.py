@@ -953,6 +953,25 @@ def _load_hosted_credentials(conn, workspace):
     return credentials_from_json(token_json)
 
 
+def _generate_brief_after_index(workspace):
+    """Surface something in Overview right after a successful index instead
+    of leaving it empty until someone remembers to click Generate digest.
+    Best-effort: a failure here must not affect the indexing job's own
+    success/failure status, and it never polishes with an LLM (matching the
+    deterministic default of the manual "Generate digest" button) so it has
+    no OpenAI dependency."""
+    conn = None
+    try:
+        conn = _open_workspace_conn(workspace)
+        scope = from_workspace(workspace)
+        generate_brief(conn, days=7, polish=False, scope=scope)
+    except Exception as exc:
+        print(f"Warning: could not auto-generate digest for {workspace['name']}: {exc}")
+    finally:
+        if conn:
+            conn.close()
+
+
 def _run_indexing_job(job_id, workspace, days, expand):
     conn = None
     try:
@@ -1003,6 +1022,7 @@ def _run_indexing_job(job_id, workspace, days, expand):
             "crawl_health": "healthy",
             "failure_reason": None,
         })
+        _generate_brief_after_index(workspace)
     except Exception as exc:
         completed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         _update_indexing_job(job_id, {
