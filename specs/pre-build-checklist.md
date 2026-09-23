@@ -41,28 +41,48 @@ Done when:
 - PostgreSQL compatibility issues are identified early: JSON handling, migrations, datetime storage, conflict/upsert syntax, and indexes.
 - A migration path exists for the graph and findings tables.
 
-## Build Slice 3 - Hosted Auth and Credential Storage
+## Build Slice 3 - Hosted Auth and Credential Storage — done (2026-09-23)
 
-Done when:
+- A dedicated Google Cloud project exists for the hosted Liminal service. ✅
+- Required service and Workspace APIs are enabled in that project. ✅
+- Runtime service accounts, secrets, KMS keys, and OAuth consent are configured. ✅
+- Web OAuth replaces local `token.json` for hosted use. ✅ Confirmed working end-to-end after fixing a PKCE state-mismatch bug (see `docs/hosted-google-cloud-setup.md`).
+- Google refresh tokens are encrypted before storage. ✅
+- Drive access health is visible per workspace. ✅
+- Disconnecting Drive stops future crawls without deleting indexed data. ✅
+- Deleting workspace data removes indexed graph/activity/finding data. ✅
+- **Refinement beyond the original plan**: the Google connection ended up
+  tenant-wide rather than per-workspace — connecting once makes every
+  workspace under that tenant usable immediately, instead of requiring a
+  separate OAuth round-trip per Shared Drive workspace. See
+  `docs/hosted-google-cloud-setup.md` for why.
+- **Not yet done**: the hosted Cloud Run service is currently public at the
+  infrastructure level (required for the OAuth callback to be reachable —
+  see "Access Model" in `docs/hosted-google-cloud-setup.md`) rather than
+  gated by a real invite/access-control flow. Revisit before inviting anyone
+  beyond the current single test account.
 
-- A dedicated Google Cloud project exists for the hosted Liminal service.
-- Required service and Workspace APIs are enabled in that project.
-- Runtime service accounts, secrets, KMS keys, and OAuth consent are configured.
-- Web OAuth replaces local `token.json` for hosted use.
-- Google refresh tokens are encrypted before storage.
-- Drive access health is visible per workspace.
-- Disconnecting Drive stops future crawls without deleting indexed data.
-- Deleting workspace data removes indexed graph/activity/finding data.
+## Build Slice 4 - Durable Crawling — partially done
 
-## Build Slice 4 - Durable Crawling
-
-Done when:
-
-- Initial crawl runs as a durable job.
-- Job progress survives process restarts.
-- Failed crawls preserve the last successful graph.
-- Scheduled incremental crawling focuses on changed documents and recent activity.
-- Manual re-index enqueues a job instead of running inside a web request.
+- Initial crawl runs as a durable job. ⚠️ Runs as a background thread, not a
+  real job queue. Made reliable on 2026-09-23 by enabling Cloud Run's "CPU
+  always allocated" — without it, the thread could stall indefinitely once
+  the triggering request returned (documented as a production incident in
+  `docs/hosted-google-cloud-setup.md`). Still not durable across a full
+  container replacement/redeploy mid-crawl.
+- Job progress survives process restarts. ✅ Partially — an orphaned job
+  (worker thread gone) is detected and marked "failed" cleanly instead of
+  hanging forever in the UI, and documents already written are safely
+  committed per-file rather than lost with the rest of the batch.
+- Failed crawls preserve the last successful graph. ✅ Per-file commits mean
+  a failed run keeps whatever it already wrote rather than losing everything.
+- Scheduled incremental crawling focuses on changed documents and recent
+  activity. ❌ Not started — the "Scheduled crawl" UI in Settings saves a
+  schedule, but nothing executes it yet (no Cloud Scheduler/Cloud Tasks
+  wiring).
+- Manual re-index enqueues a job instead of running inside a web request. ✅
+  Runs in a background thread outside the request/response cycle (see the
+  CPU-allocation caveat above).
 
 ## Build Slice 5 - Research Instrumentation
 

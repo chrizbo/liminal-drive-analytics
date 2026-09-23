@@ -39,6 +39,8 @@ Drive access determines what the crawler is allowed to read from Google. It is s
 - Store granted scopes, connected account identity, selected Drive roots, and access health per tenant/workspace.
 - Re-check access during crawls because Google permissions can change after onboarding.
 
+**Status (2026-09-23)**: hosted OAuth is implemented and confirmed working, with the connection scoped per tenant rather than per workspace (see `docs/hosted-google-cloud-setup.md`). One gap versus this plan: the Cloud Run service is currently public at the infrastructure level, not IAM-private, because a private service can't receive Google's unauthenticated OAuth-callback redirect and Cloud Run has no per-path IAM. All mutating endpoints are still gated by `X-Admin-Token`, but this means there is currently no real access control beyond that token — resolve before inviting anyone beyond the current single test account, per the open question below.
+
 ### Later Access Model
 
 Workspace admin/domain-wide delegation can be added for customers that need durable org-managed access. This should be treated as a higher-trust deployment mode with stronger admin UX, audit logs, and security review.
@@ -186,3 +188,4 @@ Prepare these before expanding beyond a small private test population:
 - At what point should the service pursue a formal security assessment?
 - Which fields need tenant-level encryption during beta versus standard database encryption at rest?
 - Should the service ever support customer-managed encryption keys, or is that an enterprise-only feature?
+- How should the OAuth callback be reachable without making the whole Cloud Run service publicly invokable — a load balancer that routes only that path unauthenticated, IAP, or is the real fix just building the invite/access-control flow so "public" is an acceptable interim state?

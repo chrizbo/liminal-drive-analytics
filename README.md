@@ -56,7 +56,9 @@ An interactive graph of every document and the links between them. Filter by nod
 
 ### Background Indexing
 
-Trigger a fresh index from Settings. Watch active phase, current document, and progress live without leaving the web app. Supports personal Drive and Shared Drives; each Shared Drive gets its own isolated workspace in the selector.
+Settings walks through indexing as four numbered steps: connect your Google account, choose what to index, index, and (optionally) schedule recurring runs. Progress renders inline in Step 3 — no blocking dialog — so the rest of the app stays usable while a crawl runs. A digest generates automatically the moment a crawl finishes successfully, so Overview isn't empty until someone remembers to click a button.
+
+Supports personal Drive and Shared Drives. Connecting Google is a one-time, tenant-wide step — every workspace (Live Drive and any Shared Drives you add) shares it automatically, no separate authorization per workspace. Add a Shared Drive from Settings (picked from a dropdown of drives your account can see, not pasted as a URL) and it becomes its own isolated workspace with its own indexed data, schedule, and job history — kept separate on purpose, since terminology-drift and hub/stale detection are within-team signals that get diluted if unrelated teams' graphs are mixed together. Workspaces you add can be renamed or deleted from their own "Danger zone" section.
 
 ## Philosophy
 
@@ -159,10 +161,10 @@ When `DRIVE_ANALYTICS_WRITE_TOKEN` is configured, operational writes require it 
 ## Hosting
 
 - **Local** (default) — FastAPI serves the web app, API, and background indexer on your machine. Good for prototyping and personal Drive testing.
-- **Google Cloud** (production path) — Cloud Run for the web app, API, and indexer; Cloud Scheduler for periodic scans; Cloud SQL/PostgreSQL for tenant, workspace, graph, finding, and review state. BigQuery can be added later if historical analytics outgrow PostgreSQL.
+- **Google Cloud** (live) — Cloud Run (API + web app) with Cloud SQL/PostgreSQL for tenant, workspace, graph, finding, and review state, KMS-encrypted Google credentials, and a working hosted OAuth connect flow. Currently a single-tenant deployment for early testing, not yet open for self-serve signup. Cloud Scheduler/Cloud Tasks for periodic scans and BigQuery for historical analytics remain future work.
 
-See [specs/README.md](specs/README.md) for the private beta plan, cloud architecture, and OAuth/security readiness checklist. The current Google Cloud project state is tracked in [docs/hosted-google-cloud-setup.md](docs/hosted-google-cloud-setup.md).
+See [specs/README.md](specs/README.md) for the private beta plan, cloud architecture, and OAuth/security readiness checklist. The current Google Cloud project state, including a written incident/postmortem on a background-indexing outage, is tracked in [docs/hosted-google-cloud-setup.md](docs/hosted-google-cloud-setup.md).
 
 ## Service Planning
 
-The next product direction is a hosted private beta for Google Workspace teams on Google Cloud. The current plan keeps the product app-focused; there is no public landing page yet.
+The next product direction is a hosted private beta for Google Workspace teams on Google Cloud. The hosted service itself is live and working end-to-end (connect, index, review); what's still missing before inviting real teams is an invite/access-control flow (today it's single-tenant, IAM-private-turned-public for one account) and durable scheduled crawling. The current plan keeps the product app-focused; there is no public landing page yet.
