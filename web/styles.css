@@ -244,7 +244,8 @@ dialog::backdrop { background: rgba(32,33,36,.32); }
 .shared-drive-scope form { margin-top: 8px; }
 .schedule-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .schedule-form .button { align-self: flex-start; }
-.danger-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.danger-zone-card { border-color: #f2b8b5; }
+.danger-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .danger-actions .button:last-child { color: #9f3931; border-color: #f2b8b5; background: #fff8f7; }
 
 #toast { position: fixed; right: 24px; bottom: 24px; z-index: 10; padding: 11px 15px; border-radius: 8px; color: white; background: var(--dark); opacity: 0; transform: translateY(10px); transition: .2s; pointer-events: none; }

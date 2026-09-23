@@ -407,14 +407,17 @@ async function settings() {
             <select name="crawl_mode">${["incremental","activity_refresh","link_expansion","backfill"].map(mode => `<option value="${mode}" ${mode === schedule.crawl_mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}</select>
             <button class="button dark" type="submit">Save schedule</button>
         </form>
-      </div>
+      </div>`}
+    </article>
+    ${workspace?.kind === "demo" ? "" : `<article class="card settings-card danger-zone-card">
+      <div class="card-header"><div><h2>Danger zone</h2><p>Destructive actions, separate from the setup steps above — these don't run indexing, they remove things.</p></div></div>
       <div class="danger-actions">
         <p class="muted small">Deletes indexed documents, links, activity, findings, and briefs stored for this workspace. Your Google connection stays intact and nothing changes in Drive itself — re-index afterward to rebuild. This cannot be undone.</p>
         <button class="button dark" data-delete-workspace-data>Delete indexed data</button>
         ${isManageableWorkspace ? `<p class="muted small">Removes this workspace entirely — its indexed data, schedule, and job history. Live Drive and other workspaces are unaffected, and your Google connection stays intact. This cannot be undone.</p>
         <button class="button dark" data-delete-workspace>Delete workspace</button>` : ""}
-      </div>`}
-    </article>
+      </div>
+    </article>`}
   </div>`;
   document.querySelector("#add-shared-drive-form")?.addEventListener("submit", async event => {
     event.preventDefault();
