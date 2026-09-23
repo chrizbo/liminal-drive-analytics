@@ -329,7 +329,6 @@ async function settings() {
   const job = workspace?.kind === "demo"
     ? { status: "idle" }
     : await api("/indexing/jobs/current").catch(() => ({ status: "idle" }));
-  const running = ["queued", "running"].includes(job.status);
   const connectedAccount = connection.account_email || connection.status || "Disconnected";
   const connectLabel = connection.status === "connected" || connection.account_email ? "Reconnect Drive" : "Connect Drive";
   const showSharedDriveCard = workspace?.kind !== "demo" && state.configuration.database_backend === "postgresql";
@@ -385,7 +384,7 @@ async function settings() {
       </div>
       <div class="setup-step">
         <div class="setup-step-header"><span class="setup-step-label">Step 3</span><h3>Index</h3></div>
-        <p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
+        <div id="index-step-content">${indexStepMarkup(job)}</div>
       </div>
       <div class="setup-step">
         <div class="setup-step-header"><span class="setup-step-label">Step 4</span><h3>Scheduled runs</h3></div>
@@ -473,6 +472,8 @@ async function settings() {
   }
   document.querySelector("[data-connect-drive]")?.addEventListener("click", connectGoogleDrive);
   document.querySelector("[data-reset-token]")?.addEventListener("click", resetWriteToken);
+  wireIndexStepHandlers();
+  if (["queued", "running"].includes(job.status)) pollIndexStep(job.id);
   document.querySelector("[data-disconnect-drive]")?.addEventListener("click", async () => {
     if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to disconnect Drive")) return;
     try {
@@ -770,59 +771,35 @@ function progressPercent(job) {
   if (!job.total) return null;
   return Math.max(0, Math.min(100, Math.round((job.current || 0) / job.total * 100)));
 }
-function indexingMarkup(job) {
+function indexStartFormMarkup() {
+  return `<form class="review-form index-start-form" id="index-start-form">
+    <label>Look back <select name="days"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">365 days</option><option value="730">2 years</option></select></label>
+    <label class="check-row"><input type="checkbox" name="expand" checked> Follow links to referenced documents outside the date window</label>
+    <button class="button primary" type="submit">Index Drive</button>
+  </form>`;
+}
+function indexProgressMarkup(job) {
   const percent = progressPercent(job);
-  const running = ["queued", "running"].includes(job.status);
-  const statusLabel = job.status === "failed" ? "Indexing failed" :
-    job.status === "completed" ? "Index complete" : "Indexing workspace";
-  return `<p class="eyebrow">Google Drive index</p><h2 class="drawer-title">${statusLabel}</h2>
-    <p class="muted">${esc(job.workspace_name || selectedWorkspace()?.name || "")}</p>
-    <section class="index-progress ${job.status}">
-      <div class="index-orbit"><span></span></div>
-      <h3>${esc(job.message || "Preparing index")}</h3>
-      ${job.document_title ? `<p class="muted">${esc(job.document_title)}</p>` : ""}
-      <div class="progress-track ${percent === null && running ? "indeterminate" : ""}">
-        <span style="width:${percent === null ? 35 : percent}%"></span>
-      </div>
-      <div class="progress-meta"><span>${esc((job.phase || job.status).replaceAll("_", " "))}</span><strong>${percent === null ? "" : `${percent}%`}</strong></div>
-    </section>
-    ${job.status === "completed" ? `<section class="detail-section"><h3>Index summary</h3><p>${Number(job.result?.files_found || 0).toLocaleString()} files found.</p><button class="button primary" data-finish-index>Return to workspace</button></section>` : ""}
-    ${job.status === "failed" ? `<section class="detail-section"><h3>What happened</h3><p>${esc(job.error || job.message)}</p><button class="button dark" data-open-index>Try again</button></section>` : ""}
-    ${running ? `<p class="index-note">You can close this screen and continue using the app. Indexing will keep running locally.</p>` : ""}`;
+  return `<div class="index-inline-progress">
+    <p class="muted">${esc(job.message || "Preparing index")}</p>
+    ${job.document_title ? `<p class="muted small">${esc(job.document_title)}</p>` : ""}
+    <div class="progress-track ${percent === null ? "indeterminate" : ""}"><span style="width:${percent === null ? 35 : percent}%"></span></div>
+    <div class="progress-meta"><span>${esc((job.phase || job.status).replaceAll("_", " "))}</span><strong>${percent === null ? "" : `${percent}%`}</strong></div>
+    <p class="index-note">You can keep using the app — this keeps running and updates here.</p>
+  </div>`;
 }
-function showIndexingJob(job, shouldOpen = true) {
-  drawerContent.innerHTML = indexingMarkup(job);
-  if (shouldOpen && !drawer.open) drawer.showModal();
-  clearTimeout(state.indexingTimer);
-  if (["queued", "running"].includes(job.status)) {
-    state.indexingTimer = setTimeout(async () => {
-      const updated = await api(`/indexing/jobs/${job.id}`).catch(error => ({ ...job, status: "failed", error: error.message }));
-      showIndexingJob(updated, drawer.open);
-    }, 800);
-  } else {
-    state.cache.clear();
+function indexStepMarkup(job) {
+  if (["queued", "running"].includes(job.status)) return indexProgressMarkup(job);
+  let banner = "";
+  if (job.status === "completed") {
+    banner = `<p class="muted small">Last run found ${Number(job.result?.files_found || 0).toLocaleString()} files.</p>`;
+  } else if (job.status === "failed") {
+    banner = `<p class="muted small">Last attempt failed: ${esc(job.error || job.message || "Unknown error")}</p>`;
   }
+  return banner + indexStartFormMarkup();
 }
-async function openIndexing() {
-  const workspace = selectedWorkspace();
-  if (!workspace || workspace.kind === "demo") {
-    toast("Switch to Live Drive or a Shared Drive to run indexing");
-    return;
-  }
-  const current = await api("/indexing/jobs/current");
-  if (["queued", "running"].includes(current.status)) {
-    showIndexingJob(current);
-    return;
-  }
-  drawerContent.innerHTML = `<p class="eyebrow">Google Drive index</p><h2 class="drawer-title">Refresh ${esc(workspace.name)}</h2>
-    <p class="muted">Pull recent Docs, Slides, links, activity, and contributors into this local workspace.</p>
-    <form class="review-form" id="index-form">
-      <label>Look back <select name="days"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="365">365 days</option><option value="730">2 years</option></select></label>
-      <label class="check-row"><input type="checkbox" name="expand" checked> Follow links to referenced documents outside the date window</label>
-      <button class="button primary" type="submit">Start indexing</button>
-    </form>`;
-  drawer.showModal();
-  document.querySelector("#index-form").onsubmit = async event => {
+function wireIndexStepHandlers() {
+  document.querySelector("#index-start-form")?.addEventListener("submit", async event => {
     event.preventDefault();
     if (!ensureWriteToken("Enter DRIVE_ANALYTICS_WRITE_TOKEN to start indexing")) return;
     const form = new FormData(event.target);
@@ -831,9 +808,26 @@ async function openIndexing() {
         method: "POST",
         body: JSON.stringify({ days: Number(form.get("days")), expand: form.get("expand") === "on" }),
       });
-      showIndexingJob(job);
+      const slot = document.querySelector("#index-step-content");
+      if (slot) { slot.innerHTML = indexStepMarkup(job); wireIndexStepHandlers(); }
+      pollIndexStep(job.id);
     } catch (error) { toast(error.message); }
-  };
+  });
+}
+function pollIndexStep(jobId) {
+  clearTimeout(state.indexingTimer);
+  state.indexingTimer = setTimeout(async () => {
+    const updated = await api(`/indexing/jobs/${jobId}`).catch(error => ({ status: "failed", error: error.message }));
+    const slot = document.querySelector("#index-step-content");
+    if (!slot) return; // navigated away from Settings — stop polling
+    if (["queued", "running"].includes(updated.status)) {
+      slot.innerHTML = indexStepMarkup(updated);
+      pollIndexStep(jobId);
+    } else {
+      state.cache.clear();
+      settings();
+    }
+  }, 800);
 }
 
 async function render() {
@@ -877,8 +871,6 @@ document.addEventListener("click", event => {
   if (doc) openDocument(doc.dataset.doc);
   if (finding) openFinding(finding.dataset.finding);
   if (event.target.closest("[data-generate-brief]")) generateBrief();
-  if (event.target.closest("[data-open-index]")) openIndexing();
-  if (event.target.closest("[data-finish-index]")) { drawer.close(); render(); }
 });
 document.addEventListener("change", event => {
   if (event.target.id !== "brief-viewer") return;
