@@ -340,46 +340,52 @@ async function settings() {
   app.innerHTML = `<div class="grid one-col settings-grid">
     <article class="card settings-card">
       <div class="card-header"><div><h2>Drive indexing</h2><p>Refresh documents, links, activity, and contributors for the selected workspace.</p></div></div>
-      <div class="settings-workspace"><span>Selected workspace</span><strong>${esc(workspace?.name || "")}</strong></div>
-      ${isManageableWorkspace ? `<form class="review-form rename-form" id="rename-workspace-form">
-        <div class="form-row"><input name="name" value="${esc(workspace.name)}" placeholder="Workspace name" required><button class="button dark" type="submit">Rename</button></div>
-      </form>` : ""}
       ${crawlStateMarkup(workspace)}
-      <div class="settings-workspace connection-row">
-        <span>Google connection</span>
-        <strong>${esc(connectedAccount)}</strong>
-        ${workspace?.kind === "demo" ? "" : `<div class="connection-actions">
-          <button class="button primary small" data-connect-drive>${esc(connectLabel)}</button>
-          <button class="button dark small" data-disconnect-drive>Disconnect Drive</button>
-          ${state.token ? `<button class="link-button" type="button" data-reset-token>Reset saved token</button>` : ""}
-        </div>`}
+      ${workspace?.kind === "demo" ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>` : `
+      <div class="setup-step">
+        <div class="setup-step-header"><span class="setup-step-label">Step 1</span><h3>Connect your Google account</h3></div>
+        <div class="settings-workspace connection-row">
+          <span>Google connection</span>
+          <strong>${esc(connectedAccount)}</strong>
+          <div class="connection-actions">
+            <button class="button primary small" data-connect-drive>${esc(connectLabel)}</button>
+            <button class="button dark small" data-disconnect-drive>Disconnect Drive</button>
+            ${state.token ? `<button class="link-button" type="button" data-reset-token>Reset saved token</button>` : ""}
+          </div>
+        </div>
+        <p class="muted small">This connects your Google account once — every workspace here (Live Drive and any Shared Drives you add) shares it, so disconnecting here disconnects all of them.</p>
+        <p class="field-error" id="drive-connect-error" hidden></p>
       </div>
-      ${workspace?.kind === "demo" ? "" : `<p class="muted small">This connects your Google account once — every workspace here (Live Drive and any Shared Drives you add) shares it, so disconnecting here disconnects all of them.</p>`}
-      ${workspace?.kind === "demo" ? "" : `<p class="field-error" id="drive-connect-error" hidden></p>`}
-      ${showSharedDriveCard ? `<div class="shared-drive-scope">
-        <div class="settings-workspace"><span>Add another Shared Drive</span></div>
-        ${sharedDriveCandidates === null
-          ? `<p class="muted">Connect your Google account above to see Shared Drives you can add.</p>`
-          : sharedDriveCandidates.length === 0
-          ? `<p class="muted">No more Shared Drives to add as their own workspace — either your account can't see any, or they're all already added.</p>`
-          : `<form class="review-form" id="add-shared-drive-form">
-        <label>Shared Drive
-          <select name="drive" required>
-            <option value="" disabled selected>Select a Shared Drive</option>
-            ${sharedDriveCandidates.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}
-          </select>
-        </label>
-        <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
-        <p class="muted small">${workspace.kind === "live"
-          ? `"Index Drive" below only reaches your personal My Drive files, never Shared Drives. To index a Shared Drive on its own, add it here as its own workspace, then select it above.`
-          : `Adding a Shared Drive here creates a separate workspace for it, so it stays isolated from "${esc(workspace.name)}". Select it above once added.`}</p>
-        <button class="button dark" type="submit">Add Shared Drive</button>
-      </form>
-      <p class="field-error" id="add-shared-drive-error" hidden></p>`}
-      </div>` : ""}
-      ${workspace?.kind === "demo"
-        ? `<p class="muted">Demo data is isolated and cannot be indexed from Google Drive.</p>`
-        : `<p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
+      <div class="setup-step">
+        <div class="setup-step-header"><span class="setup-step-label">Step 2</span><h3>Choose what to index</h3></div>
+        <div class="settings-workspace"><span>This workspace indexes</span><strong>${esc(workspace?.name || "")}</strong></div>
+        ${isManageableWorkspace ? `<form class="review-form rename-form" id="rename-workspace-form">
+          <div class="form-row"><input name="name" value="${esc(workspace.name)}" placeholder="Workspace name" required><button class="button dark" type="submit">Rename</button></div>
+        </form>` : ""}
+        ${showSharedDriveCard ? `<div class="shared-drive-scope">
+          <p class="muted small">${workspace.kind === "live"
+            ? `This workspace only reaches your personal My Drive files, never Shared Drives. To index a Shared Drive on its own, add it below as its own workspace.`
+            : `Want another Shared Drive indexed separately from "${esc(workspace.name)}"? Add it below as its own workspace.`}</p>
+          ${sharedDriveCandidates === null
+            ? `<p class="muted">Connect your Google account in Step 1 to see Shared Drives you can add.</p>`
+            : sharedDriveCandidates.length === 0
+            ? `<p class="muted">No more Shared Drives to add — either your account can't see any, or they're all already added.</p>`
+            : `<form class="review-form" id="add-shared-drive-form">
+          <label>Shared Drive
+            <select name="drive" required>
+              <option value="" disabled selected>Select a Shared Drive</option>
+              ${sharedDriveCandidates.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Workspace name (optional)<input name="name" placeholder="Defaults to the Shared Drive's name"></label>
+          <button class="button dark" type="submit">Add Shared Drive</button>
+        </form>
+        <p class="field-error" id="add-shared-drive-error" hidden></p>`}
+        </div>` : ""}
+      </div>
+      <div class="setup-step">
+        <div class="setup-step-header"><span class="setup-step-label">Step 3</span><h3>Index</h3></div>
+        <p class="muted">${running ? esc(job.message || "Indexing is running.") : "No indexing job is currently running."}</p><button class="button primary" data-open-index>${running ? "View indexing progress" : "Index Drive"}</button>
           <form class="review-form schedule-form" id="schedule-form">
             <label class="check-row"><input type="checkbox" name="enabled" ${schedule.enabled ? "checked" : ""}> Scheduled crawl</label>
             <div class="form-row">
@@ -398,12 +404,13 @@ async function settings() {
             <select name="crawl_mode">${["incremental","activity_refresh","link_expansion","backfill"].map(mode => `<option value="${mode}" ${mode === schedule.crawl_mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}</select>
             <button class="button dark" type="submit">Save schedule</button>
           </form>
-          <div class="danger-actions">
-            <p class="muted small">Deletes indexed documents, links, activity, findings, and briefs stored for this workspace. Your Google connection stays intact and nothing changes in Drive itself — re-index afterward to rebuild. This cannot be undone.</p>
-            <button class="button dark" data-delete-workspace-data>Delete indexed data</button>
-            ${isManageableWorkspace ? `<p class="muted small">Removes this workspace entirely — its indexed data, schedule, and job history. Live Drive and other workspaces are unaffected, and your Google connection stays intact. This cannot be undone.</p>
-            <button class="button dark" data-delete-workspace>Delete workspace</button>` : ""}
-          </div>`}
+      </div>
+      <div class="danger-actions">
+        <p class="muted small">Deletes indexed documents, links, activity, findings, and briefs stored for this workspace. Your Google connection stays intact and nothing changes in Drive itself — re-index afterward to rebuild. This cannot be undone.</p>
+        <button class="button dark" data-delete-workspace-data>Delete indexed data</button>
+        ${isManageableWorkspace ? `<p class="muted small">Removes this workspace entirely — its indexed data, schedule, and job history. Live Drive and other workspaces are unaffected, and your Google connection stays intact. This cannot be undone.</p>
+        <button class="button dark" data-delete-workspace>Delete workspace</button>` : ""}
+      </div>`}
     </article>
   </div>`;
   document.querySelector("#add-shared-drive-form")?.addEventListener("submit", async event => {
