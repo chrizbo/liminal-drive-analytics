@@ -174,25 +174,34 @@ async def select_workspace(request: Request, call_next):
 
 def get_conn():
     workspace = active_workspace.get()
-    if db.service_database_url() and workspace and workspace["kind"] != "demo":
+    hosted = bool(db.service_database_url() and workspace and workspace["kind"] != "demo")
+    if hosted:
         conn = connect_service_database()
     else:
         conn = connect(active_database_path.get() or db.DB_PATH)
     init(conn)
     if workspace:
         db.ensure_service_context(conn, workspace)
-        db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
+        # Legacy-row backfill only applies to local SQLite databases created
+        # before multi-tenancy existed. Hosted rows are always fully scoped
+        # already, and running this broad UPDATE across every customer table
+        # on every request caused Postgres deadlocks under concurrent reads
+        # (e.g. the Overview page's parallel fetches).
+        if not hosted:
+            db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
     return conn
 
 
 def get_conn_for_workspace(workspace):
-    if db.service_database_url() and workspace and workspace["kind"] != "demo":
+    hosted = bool(db.service_database_url() and workspace and workspace["kind"] != "demo")
+    if hosted:
         conn = connect_service_database()
     else:
         conn = connect(workspace.get("database_path") or db.DB_PATH)
     init(conn)
     db.ensure_service_context(conn, workspace)
-    db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
+    if not hosted:
+        db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
     return conn
 
 
@@ -954,7 +963,6 @@ def _run_indexing_job(job_id, workspace, days, expand):
             conn = connect_service_database()
             init(conn)
             db.ensure_service_context(conn, workspace)
-            db.stamp_workspace_rows(conn, workspace["tenant_id"], workspace["id"])
             run_kwargs["conn"] = conn
             run_kwargs["creds"] = _load_hosted_credentials(conn, workspace)
         result = run_indexer(days, False, expand, **run_kwargs)

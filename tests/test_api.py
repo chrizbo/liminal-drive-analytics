@@ -60,6 +60,25 @@ def test_configuration_reports_postgres_backend(monkeypatch, tmp_path):
     assert result["database_backend"] == "postgresql"
 
 
+def test_hosted_requests_skip_legacy_row_backfill(monkeypatch, tmp_path):
+    # stamp_workspace_rows runs a broad UPDATE across every customer table to
+    # backfill tenant/workspace IDs on legacy local SQLite rows. Hosted rows
+    # are always fully scoped already, and calling it on every hosted request
+    # caused real Postgres deadlocks once multiple requests ran concurrently
+    # (e.g. the Overview page's parallel fetches) — it must never run there.
+    hosted_path = str(tmp_path / "hosted-no-stamp.db")
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+    monkeypatch.setattr(api, "connect_service_database", lambda: db.connect(hosted_path))
+
+    calls = []
+    monkeypatch.setattr(db, "stamp_workspace_rows", lambda *args, **kwargs: calls.append(args))
+
+    response = TestClient(api.app).get("/google-connection?workspace=live")
+
+    assert response.status_code == 200
+    assert calls == []
+
+
 def test_configuration_update_persists_settings(monkeypatch, tmp_path):
     config_path = tmp_path / "config.json"
     monkeypatch.setattr(api, "CONFIG_PATH", str(config_path))

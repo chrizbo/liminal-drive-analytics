@@ -95,16 +95,16 @@ def test_storage_sql_placeholder_translation():
     assert dialect(FakePostgresConnection()) == "postgresql"
 
 
-def test_storage_sql_rewrites_sqlite_scalar_max_for_postgres():
+def test_storage_sql_rewrites_placeholders_for_postgres():
     from storage import sql_for_connection
 
     class FakePostgresConnection:
         dialect = "postgresql"
 
-    sql = "UPDATE person_activity SET last_seen=MAX(last_seen, excluded.last_seen) WHERE id=?"
+    sql = "UPDATE person_activity SET last_seen=? WHERE id=?"
     translated = sql_for_connection(FakePostgresConnection(), sql)
-    assert "GREATEST(last_seen, excluded.last_seen)" in translated
     assert "%s" in translated
+    assert "?" not in translated
 
 
 def test_storage_upserts_use_scoped_conflicts_for_postgres():
@@ -309,6 +309,28 @@ def test_init_is_idempotent(tmp_db):
     db.init(conn)
     db.init(conn)  # second call should not raise
     conn.close()
+
+
+def test_increment_person_activity_accumulates_count_and_latest_seen(tmp_db):
+    import db
+    from storage import increment_person_activity, StorageScope
+
+    conn = db.connect()
+    db.init(conn)
+    scope = StorageScope("tenant-a", "workspace-a")
+
+    increment_person_activity(conn, "person-a", "doc-a", "edit", "2026-01-01T00:00:00", scope)
+    increment_person_activity(conn, "person-a", "doc-a", "edit", "2026-01-03T00:00:00", scope)
+    increment_person_activity(conn, "person-a", "doc-a", "edit", "2026-01-02T00:00:00", scope)
+
+    row = conn.execute(
+        "SELECT count, last_seen FROM person_activity WHERE person_id = 'person-a'"
+    ).fetchone()
+    conn.close()
+
+    assert row["count"] == 3
+    assert row["last_seen"] == "2026-01-03T00:00:00"
+
 
 def test_migration_adds_web_url(tmp_db):
     import db

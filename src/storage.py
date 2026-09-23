@@ -20,11 +20,7 @@ def dialect(conn):
 
 
 def postgres_sql(sql):
-    return (
-        sql
-        .replace("?", "%s")
-        .replace("last_seen=MAX(last_seen, excluded.last_seen)", "last_seen=GREATEST(last_seen, excluded.last_seen)")
-    )
+    return sql.replace("?", "%s")
 
 
 def sql_for_connection(conn, sql):
@@ -1048,8 +1044,9 @@ def increment_person_activity(conn, person_id, document_id, action, last_seen, s
         )
         VALUES (?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT{conflict} DO UPDATE SET
-            count=count+1,
-            last_seen=MAX(last_seen, excluded.last_seen),
+            count=person_activity.count+1,
+            last_seen=CASE WHEN excluded.last_seen > person_activity.last_seen
+                THEN excluded.last_seen ELSE person_activity.last_seen END,
             tenant_id=COALESCE(person_activity.tenant_id, excluded.tenant_id),
             workspace_id=COALESCE(person_activity.workspace_id, excluded.workspace_id)
     """, (
