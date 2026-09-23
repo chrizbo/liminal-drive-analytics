@@ -143,6 +143,12 @@ def available_workspaces():
 
 @app.middleware("http")
 async def select_workspace(request: Request, call_next):
+    if request.url.path == "/health":
+        # Liveness check: must never depend on the database. Cloud Run uses
+        # this to decide whether an instance is healthy, so if it can hang
+        # waiting on a Postgres connection, a starved pool takes down the
+        # one signal that would let Cloud Run cycle the bad instance.
+        return await call_next(request)
     workspace_id = request.query_params.get("workspace", "live")
     requested_tenant_id = request.query_params.get("tenant")
     workspace = next((item for item in available_workspaces() if item["id"] == workspace_id), None)
@@ -865,6 +871,10 @@ def _persist_indexing_job_update(job_id, workspace, values):
         conn.close()
 
 
+_indexing_job_last_persisted = {}
+INDEXING_PROGRESS_PERSIST_INTERVAL_SECONDS = 2
+
+
 def _update_indexing_job(job_id, values, workspace=None):
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     values = {**values, "updated_at": now}
@@ -872,7 +882,22 @@ def _update_indexing_job(job_id, values, workspace=None):
         job = indexing_jobs.get(job_id)
         if job:
             job.update(values)
-    if workspace:
+    if not workspace:
+        return
+    # Per-file progress fires 20+ times for a modest crawl, each wanting its
+    # own Postgres connection. db-f1-micro's connection budget is tiny, and
+    # every browser tab polling this job adds its own connection too — throttle
+    # progress persistence so a large crawl can't exhaust the pool by itself.
+    # In-memory state (read by same-instance polls) still updates every time;
+    # terminal states always persist immediately regardless of throttling.
+    is_terminal = values.get("status") in {"completed", "failed"}
+    last = _indexing_job_last_persisted.get(job_id)
+    elapsed = (time.time() - last) if last else None
+    if is_terminal or elapsed is None or elapsed >= INDEXING_PROGRESS_PERSIST_INTERVAL_SECONDS:
+        if is_terminal:
+            _indexing_job_last_persisted.pop(job_id, None)
+        else:
+            _indexing_job_last_persisted[job_id] = time.time()
         _persist_indexing_job_update(job_id, workspace, values)
 
 

@@ -79,6 +79,44 @@ def test_hosted_requests_skip_legacy_row_backfill(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_health_check_never_touches_the_database(monkeypatch):
+    # A starved Postgres connection pool once took down /health itself,
+    # which is exactly the signal Cloud Run needs to detect and cycle a bad
+    # instance. /health must succeed even if the database is unreachable.
+    monkeypatch.setenv(db.DATABASE_URL_ENV, "postgresql://fake")
+
+    def explode():
+        raise RuntimeError("database is unreachable")
+
+    monkeypatch.setattr(api, "connect_service_database", lambda: explode())
+
+    response = TestClient(api.app).get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_indexing_progress_persistence_is_throttled(monkeypatch):
+    # Per-file progress can fire 20+ times for a modest crawl, and each one
+    # used to open its own Postgres connection — a real contributor to a
+    # production connection-pool exhaustion incident. Rapid non-terminal
+    # updates should only persist once per throttle window; a terminal
+    # status must always persist immediately regardless of timing.
+    persisted = []
+    monkeypatch.setattr(api, "_persist_indexing_job_update", lambda job_id, workspace, values: persisted.append(values))
+    api._indexing_job_last_persisted.clear()
+    workspace = {"id": "live", "tenant_id": db.LOCAL_TENANT_ID, "name": "Live Drive", "kind": "live"}
+
+    api._update_indexing_job("job-1", {"status": "running", "current": 1}, workspace)
+    api._update_indexing_job("job-1", {"status": "running", "current": 2}, workspace)
+    api._update_indexing_job("job-1", {"status": "running", "current": 3}, workspace)
+    assert len(persisted) == 1
+
+    api._update_indexing_job("job-1", {"status": "completed"}, workspace)
+    assert len(persisted) == 2
+    assert persisted[-1]["status"] == "completed"
+
+
 def test_configuration_update_persists_settings(monkeypatch, tmp_path):
     config_path = tmp_path / "config.json"
     monkeypatch.setattr(api, "CONFIG_PATH", str(config_path))

@@ -3,9 +3,11 @@
 import argparse
 import json
 import os
+import httplib2
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
 from google_auth_oauthlib.flow import Flow
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -82,12 +84,21 @@ def credentials_from_json(credentials_json):
     return Credentials.from_authorized_user_info(json.loads(credentials_json), SCOPES)
 
 
+GOOGLE_API_TIMEOUT_SECONDS = 30
+
+
 def build_services(creds):
-    drive = build("drive", "v3", credentials=creds)
-    docs = build("docs", "v1", credentials=creds)
-    slides = build("slides", "v1", credentials=creds)
-    activity = build("driveactivity", "v2", credentials=creds)
-    people = build("people", "v1", credentials=creds)
+    # A bare socket timeout, not a retry/backoff policy: without it, a single
+    # stalled connection (observed with a People API call) hangs the request
+    # forever. On the hosted service that ties up a background thread and its
+    # Postgres connection indefinitely, which starves the whole app once the
+    # connection pool is exhausted.
+    http = AuthorizedHttp(creds, http=httplib2.Http(timeout=GOOGLE_API_TIMEOUT_SECONDS))
+    drive = build("drive", "v3", http=http)
+    docs = build("docs", "v1", http=http)
+    slides = build("slides", "v1", http=http)
+    activity = build("driveactivity", "v2", http=http)
+    people = build("people", "v1", http=http)
     return drive, docs, slides, activity, people
 
 
